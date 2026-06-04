@@ -1,0 +1,99 @@
+# =============================================================================
+# Sign Language Recogniser — Root .gitignore
+# =============================================================================
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ── Distribution / packaging ──────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ── Type-checking caches ──────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+.pyright/
+
+# =============================================================================
+# Backend — generated data (NEVER track these)
+# =============================================================================
+
+# Raw gesture sequences collected during data-capture sessions.
+# Re-generate with: python backend/ml/collect_data.py
+backend/storage/sequences/
+
+# Compiled dataset splits (re-generated from sequences by prepare_data.py).
+backend/ml/dataset/*.npy
+backend/ml/dataset/*.json
+!backend/ml/dataset/.gitkeep
+
+# Trained model weights and TensorBoard logs (large binary artefacts).
+backend/models/*.h5
+backend/models/*.keras
+backend/models/*.weights.h5
+backend/models/logs/
+backend/models/training_history.json
+!backend/models/.gitkeep
+
+# =============================================================================
+# Frontend
+# =============================================================================
+
+# Node (if a build step is ever added)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── IDE / editors ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── OS artefacts ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ── Secrets / environment ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/

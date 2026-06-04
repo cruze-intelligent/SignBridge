@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="description" content="SignBridge — real-time sign language recognition. Translates hand gestures into English and Acholi text using MediaPipe Holistic and AI." />
+    <title>SignBridge — Real-Time Sign Language Recognition</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+
+    <!-- MediaPipe Holistic + Camera Utils (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         ONBOARDING WIZARD — shown once for first-time users
+    ═══════════════════════════════════════════════════════════════════ -->
+    <div id="onboarding-overlay" role="dialog" aria-modal="true" aria-label="Welcome tutorial" hidden>
+      <div class="wizard-card">
+
+        <!-- Step progress dots -->
+        <div class="wizard-steps" aria-label="Tutorial progress">
+          <span class="wizard-dot active"></span>
+          <span class="wizard-dot"></span>
+          <span class="wizard-dot"></span>
+          <span class="wizard-dot"></span>
+        </div>
+
+        <!-- Slide 0 — Welcome -->
+        <div class="wizard-slide active" id="slide-0">
+          <div class="wizard-icon">✋</div>
+          <h2 class="wizard-title">Welcome to SignBridge</h2>
+          <p class="wizard-body">
+            Turn hand gestures into English and Acholi text in real time,
+            powered by MediaPipe Holistic and a Transformer AI model.
+          </p>
+        </div>
+
+        <!-- Slide 1 — Camera setup -->
+        <div class="wizard-slide" id="slide-1" hidden>
+          <div class="wizard-icon">📷</div>
+          <h2 class="wizard-title">Position Your Camera</h2>
+          <p class="wizard-body">
+            Hold your hand <strong>30–60 cm</strong> from the camera in good
+            light. Keep your whole upper body visible so pose landmarks can
+            be tracked alongside your hands.
+          </p>
+        </div>
+
+        <!-- Slide 2 — Translating -->
+        <div class="wizard-slide" id="slide-2" hidden>
+          <div class="wizard-icon">🟢</div>
+          <h2 class="wizard-title">Start Translating</h2>
+          <p class="wizard-body">
+            Tap <strong>Start Translating</strong> and perform your sign
+            in front of the camera. Every 30 frames the AI model predicts
+            the gesture and the translation appears automatically.
+          </p>
+        </div>
+
+        <!-- Slide 3 — Results -->
+        <div class="wizard-slide" id="slide-3" hidden>
+          <div class="wizard-icon">🌍</div>
+          <h2 class="wizard-title">Read the Translation</h2>
+          <p class="wizard-body">
+            Results appear below the camera in both <strong>English</strong>
+            and <strong>Acholi (Luo)</strong>. Tap the copy icon to share
+            the text or tap the globe to toggle between languages.
+          </p>
+        </div>
+
+        <div class="wizard-nav">
+          <button id="wizard-skip" class="btn-ghost" aria-label="Skip tutorial">Skip</button>
+          <button id="wizard-next" class="btn-primary" aria-label="Next step">Next</button>
+        </div>
+
+      </div><!-- /.wizard-card -->
+    </div><!-- /#onboarding-overlay -->
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         HELP DRAWER (bottom sheet, opened by floating ? button)
+    ═══════════════════════════════════════════════════════════════════ -->
+    <div id="help-overlay" hidden aria-hidden="true">
+      <div class="help-panel" role="complementary" aria-label="Help">
+        <div class="help-handle"></div>
+        <button id="help-close" class="help-close-btn" aria-label="Close help">✕</button>
+        <h3 class="help-title">Quick Help</h3>
+        <ul class="help-list">
+          <li><span class="hb">🟢</span><span><strong>Start Translating</strong> — begins the live 225-float landmark stream to the AI model.</span></li>
+          <li><span class="hb">🔴</span><span><strong>Stop Translating</strong> — stops the stream and ends the session.</span></li>
+          <li><span class="hb">📶</span><span>The dot in the header shows WebSocket connection health (green = live).</span></li>
+          <li><span class="hb">💡</span><span>Stay within 60 cm, well-lit, with your full torso visible for best accuracy.</span></li>
+          <li><span class="hb">🤖</span><span>The AI triggers a prediction every 30 frames — results appear automatically.</span></li>
+          <li><span class="hb">🌐</span><span>Tap the globe icon to toggle the Acholi translation on/off.</span></li>
+        </ul>
+        <button id="replay-tutorial" class="btn-ghost full-w" aria-label="Replay tutorial">Replay Tutorial</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         APP SHELL
+    ═══════════════════════════════════════════════════════════════════ -->
+    <div class="app-shell">
+
+      <!-- TOP BAR -->
+      <header class="top-bar" role="banner">
+        <div class="top-bar-brand">
+          <span class="brand-icon" aria-hidden="true">✋</span>
+          <span class="brand-name">SignBridge</span>
+        </div>
+        <div class="top-bar-actions">
+          <div class="ws-status" title="Server connection status" aria-live="polite">
+            <span id="ws-dot" class="ws-dot disconnected" aria-label="Disconnected"></span>
+            <span id="ws-label" class="ws-label">Offline</span>
+          </div>
+          <button id="lang-toggle-btn" class="icon-btn" aria-label="Toggle language display" title="Toggle language">
+            <!-- Globe SVG -->
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- MAIN -->
+      <main class="main-content" id="main-content" role="main">
+
+        <!-- ── CAMERA SECTION ─────────────────────────────────────── -->
+        <section class="camera-section" aria-label="Gesture capture">
+
+          <!-- Video + Canvas stack -->
+          <div class="camera-wrap" id="camera-wrap">
+            <video id="input-video" class="input-video" playsinline autoplay muted aria-label="Webcam input"></video>
+            <canvas id="output-canvas" class="output-canvas" aria-hidden="true"></canvas>
+
+            <!-- Overlaid HUD badges -->
+            <div id="cam-pill" class="cam-pill">
+              <span id="cam-pill-icon" aria-hidden="true">⏳</span>
+              <span id="cam-pill-text">Initialising…</span>
+            </div>
+
+            <div id="frame-badge" class="frame-badge" aria-live="polite" aria-label="Frames buffered">
+              <span id="frame-count">0</span><span class="frame-denom">/30</span>
+            </div>
+
+            <!-- Landmark detection indicators -->
+            <div class="detection-bar" aria-hidden="true">
+              <span id="ind-rh" class="det-chip" title="Right hand">RH</span>
+              <span id="ind-lh" class="det-chip" title="Left hand">LH</span>
+              <span id="ind-pose" class="det-chip" title="Pose">POSE</span>
+            </div>
+          </div>
+
+          <!-- Translation controls -->
+          <div class="controls-row" role="group" aria-label="Translation controls">
+            <button id="btn-start" class="ctrl-btn primary" aria-label="Start translating gesture sequence" disabled>
+              <!-- Record SVG -->
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>
+              Start Translating
+            </button>
+            <button id="btn-stop" class="ctrl-btn danger" aria-label="Stop translating and end session" disabled>
+              <!-- Stop SVG -->
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+              Stop Translating
+            </button>
+          </div>
+
+
+        </section><!-- /.camera-section -->
+
+        <!-- ── TRANSLATION OUTPUT ─────────────────────────────────── -->
+        <section class="translation-section" aria-label="Translation output">
+          <div class="trans-card" id="trans-card">
+
+            <div class="trans-header">
+              <span aria-hidden="true">🔤</span>
+              <span class="trans-title">Translation</span>
+              <button id="btn-copy" class="icon-btn" aria-label="Copy translation" title="Copy" disabled>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
+
+            <div class="bilingual-output">
+              <!-- English block -->
+              <div class="lang-block" id="lang-en-block">
+                <span class="lang-tag">EN</span>
+                <p id="out-english" class="out-text" lang="en" aria-live="polite" aria-label="English translation">
+                  Waiting for gesture…
+                </p>
+              </div>
+
+              <div class="lang-sep" aria-hidden="true"></div>
+
+              <!-- Acholi block -->
+              <div class="lang-block" id="lang-ach-block">
+                <span class="lang-tag ach">ACH</span>
+                <p id="out-acholi" class="out-text" lang="ach" aria-live="polite" aria-label="Acholi translation">
+                  Kur me twero nyutt coc…
+                </p>
+              </div>
+            </div>
+
+            <!-- Session history -->
+            <details class="history-details">
+              <summary class="history-summary">
+                Session History
+                <span id="history-count" class="history-badge">0</span>
+              </summary>
+              <ol id="history-list" class="history-list" aria-label="Translation history" reversed></ol>
+            </details>
+
+          </div><!-- /.trans-card -->
+        </section>
+
+        <!-- ── SERVER LOG ─────────────────────────────────────────── -->
+        <section class="log-section" aria-label="Server log">
+          <details class="log-details">
+            <summary class="log-summary">Server Log</summary>
+            <div id="server-log" class="server-log" role="log" aria-live="polite" aria-label="Server messages"></div>
+          </details>
+        </section>
+
+        <!-- ── PIPELINE DEBUG (collapsible) ──────────────────────── -->
+        <section class="debug-section" aria-label="Pipeline diagnostics">
+          <details class="log-details">
+            <summary class="log-summary">Pipeline Diagnostics</summary>
+            <div class="debug-grid">
+              <div class="debug-chip">
+                <span class="dc-label">Frame</span>
+                <span id="dbg-total" class="dc-val">0</span>
+              </div>
+              <div class="debug-chip">
+                <span class="dc-label">225-float frames</span>
+                <span id="dbg-frames" class="dc-val">0</span>
+              </div>
+              <div class="debug-chip">
+                <span class="dc-label">RH zeros</span>
+                <span id="dbg-rh-zero" class="dc-val">0</span>
+              </div>
+              <div class="debug-chip">
+                <span class="dc-label">LH zeros</span>
+                <span id="dbg-lh-zero" class="dc-val">0</span>
+              </div>
+              <div class="debug-chip">
+                <span class="dc-label">WS sent</span>
+                <span id="dbg-ws-sent" class="dc-val">0</span>
+              </div>
+              <div class="debug-chip">
+                <span class="dc-label">Buffer</span>
+                <span id="dbg-buf" class="dc-val">0/30</span>
+              </div>
+            </div>
+          </details>
+        </section>
+
+      </main><!-- /#main-content -->
+
+      <!-- BOTTOM NAV -->
+      <nav class="bottom-nav" role="navigation" aria-label="Main navigation">
+        <button class="nav-item active" id="nav-capture" aria-label="Capture" aria-current="page">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span>Capture</span>
+        </button>
+        <button class="nav-item" id="nav-history" aria-label="History">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>History</span>
+        </button>
+        <button class="nav-item" id="nav-settings" aria-label="Settings">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Settings</span>
+        </button>
+        <button class="nav-item" id="nav-about" aria-label="About">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <span>About</span>
+        </button>
+      </nav>
+
+    </div><!-- /.app-shell -->
+
+    <!-- FLOATING HELP BUTTON -->
+    <button id="fab-help" class="fab-help" aria-label="Open help" aria-controls="help-overlay" aria-expanded="false">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+    </button>
+
+    <!-- TOAST CONTAINER -->
+    <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

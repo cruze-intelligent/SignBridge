@@ -1,0 +1,29 @@
+# byte-compiled / optimised cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# virtual environment
+.venv/
+venv/
+env/
+
+# storage — the .npy files are generated data, not source code
+storage/sequences/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# ML — dataset splits (large, re-generatable from sequences)
+ml/dataset/*.npy
+ml/dataset/*.json
+!ml/dataset/.gitkeep
+
+# ML — trained model weights (large binary artefacts)
+models/*.h5
+models/*.keras
+models/logs/
+models/training_history.json
+!models/.gitkeep
