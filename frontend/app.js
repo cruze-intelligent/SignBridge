@@ -877,7 +877,7 @@ class UIController {
 
   // ── Translation display ──────────────────────────────────────────────
 
-  _showTranslation(label) {
+  _showTranslation(label, frames) {
     const en  = toEnglish(label);
     const ach = toAcholi(label);
 
@@ -889,8 +889,11 @@ class UIController {
     this._transCard.classList.add('highlight');
     setTimeout(() => this._transCard.classList.remove('highlight'), 1_600);
 
-    this._addToHistory(label, en, ach);
+    this._addToHistory(label, en, ach, frames);
     appendLog(`Translation: ${en} / ${ach}`, 'ok');
+
+    // NEW: Speak the English translation aloud
+    this._speakTranslation(en);
   }
 
   _addToHistory(label, en, ach) {
@@ -921,6 +924,33 @@ class UIController {
     this._achBlock.style.display = this._showAcholi ? '' : 'none';
     this._langSep.style.display  = this._showAcholi ? '' : 'none';
     showToast(this._showAcholi ? 'Showing EN + ACH' : 'English only', 'info');
+  }
+
+  // ── Audio Output ─────────────────────────────────────────────────────
+
+  _speakTranslation(text) {
+    // 1. Cancel any currently playing audio so rapid signs don't overlap
+    window.speechSynthesis.cancel();
+
+    // 2. Create the speech request
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    // 3. Configure the voice (slightly slower rate usually sounds more natural)
+    utterance.rate   = 0.95;
+    utterance.pitch  = 1.0;
+    utterance.volume = 1.0;
+
+    // Optional: Try to find a good English voice if multiple are available
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(
+      (v) => v.lang.startsWith('en-GB') || v.lang.startsWith('en-US'),
+    );
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    // 4. Play the audio
+    window.speechSynthesis.speak(utterance);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────
