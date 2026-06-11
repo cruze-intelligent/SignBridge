@@ -120,10 +120,16 @@ def create_app() -> FastAPI:
     )
 
     # ── CORS ──────────────────────────────────────────────────────────────
-    # Tighten ``allow_origins`` to the exact frontend origin in production.
+    # Origins are read from the ALLOWED_ORIGINS env var (comma-separated).
+    # Defaults to wildcard for local development; tighten for production by
+    # setting e.g. ALLOWED_ORIGINS="https://cruze-intelligent.github.io"
+    import os as _os
+    _raw = _os.environ.get("ALLOWED_ORIGINS", "*")
+    _origins = [o.strip() for o in _raw.split(",") if o.strip()] or ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

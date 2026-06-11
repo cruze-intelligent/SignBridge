@@ -11,6 +11,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
 
+    <!-- Runtime backend URL — overridden by localStorage key 'sb_backend_url' -->
+    <meta name="sb-default-ws" content="ws://localhost:8000/ws/landmarks" />
+
     <!-- MediaPipe Holistic + Camera Utils (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -73,8 +76,9 @@
           <h2 class="wizard-title">Read the Translation</h2>
           <p class="wizard-body">
             Results appear below the camera in both <strong>English</strong>
-            and <strong>Acholi (Luo)</strong>. Tap the copy icon to share
-            the text or tap the globe to toggle between languages.
+            and <strong>Acholi (Luo)</strong>. Tap the copy icon to share the
+            text, or tap <strong>Games</strong> in the navigation to practise
+            Uganda Sign Language interactively.
           </p>
         </div>
 
@@ -101,6 +105,8 @@
           <li><span class="hb">💡</span><span>Stay within 60 cm, well-lit, with your full torso visible for best accuracy.</span></li>
           <li><span class="hb">🤖</span><span>The AI triggers a prediction every 30 frames — results appear automatically.</span></li>
           <li><span class="hb">🌐</span><span>Tap the globe icon to toggle the Acholi translation on/off.</span></li>
+          <li><span class="hb">⚙️</span><span>Tap <strong>Settings</strong> in the bottom nav to change the backend server URL when hosting remotely.</span></li>
+          <li><span class="hb">🎮</span><span>Tap <strong>Games</strong> to practise Uganda Sign Language with SignMaster.</span></li>
         </ul>
         <button id="replay-tutorial" class="btn-ghost full-w" aria-label="Replay tutorial">Replay Tutorial</button>
       </div>
@@ -210,15 +216,6 @@
               </div>
             </div>
 
-            <!-- Session history -->
-            <details class="history-details">
-              <summary class="history-summary">
-                Session History
-                <span id="history-count" class="history-badge">0</span>
-              </summary>
-              <ol id="history-list" class="history-list" aria-label="Translation history" reversed></ol>
-            </details>
-
           </div><!-- /.trans-card -->
         </section>
 
@@ -271,10 +268,10 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           <span>Capture</span>
         </button>
-        <button class="nav-item" id="nav-history" aria-label="History">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span>History</span>
-        </button>
+        <a class="nav-item" id="nav-games" href="https://cruze-intelligent.github.io/SignMaster/" target="_blank" rel="noopener" aria-label="Practice sign language games">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 12h.01M8 12h.01M16 12h.01"/><path d="M6 10v4"/></svg>
+          <span>Games</span>
+        </a>
         <button class="nav-item" id="nav-settings" aria-label="Settings">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           <span>Settings</span>
@@ -293,6 +290,38 @@
         <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
     </button>
+
+    <!-- SETTINGS OVERLAY -->
+    <div id="settings-overlay" hidden aria-hidden="true">
+      <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+        <div class="help-handle"></div>
+        <button id="settings-close" class="help-close-btn" aria-label="Close settings">✕</button>
+        <h3 class="help-title">Settings</h3>
+
+        <div class="settings-field">
+          <label class="settings-label" for="backend-url-input">Backend WebSocket URL</label>
+          <p class="settings-hint">
+            Change this when the backend is hosted remotely (e.g. on Render or Railway).
+            Use <code>wss://</code> for HTTPS-hosted backends.
+          </p>
+          <input
+            id="backend-url-input"
+            class="settings-input"
+            type="url"
+            placeholder="ws://localhost:8000/ws/landmarks"
+            aria-describedby="backend-url-hint"
+          />
+          <div class="settings-row">
+            <button id="settings-save-url" class="btn-primary" aria-label="Save backend URL">Save &amp; Reconnect</button>
+            <button id="settings-reset-url" class="btn-ghost" aria-label="Reset to default URL">Reset to Default</button>
+          </div>
+        </div>
+
+        <div class="settings-info">
+          <p>Current connection: <span id="settings-current-url" class="settings-mono"></span></p>
+        </div>
+      </div>
+    </div>
 
     <!-- TOAST CONTAINER -->
     <div id="toast-container" class="toast-container" aria-live="assertive" aria-atomic="true"></div>

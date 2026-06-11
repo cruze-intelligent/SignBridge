@@ -1,9 +1,28 @@
+"""
+collect_data.py
+===============
+Standalone webcam data-collection tool for Uganda Sign Language (USL) sequences.
+
+Usage
+-----
+    python backend/ml/collect_data.py
+
+Controls
+--------
+    R — start recording a 30-frame sequence
+    Q — quit and return to the label prompt
+
+See usl_vocabulary.py for the full list of target signs.
+"""
+
 import cv2
 import mediapipe as mp
 import numpy as np
 import os
 import uuid
 from datetime import datetime
+
+from usl_vocabulary import ALL_SIGNS, print_collection_guide
 
 # --- Configuration ---
 NUM_FRAMES = 30
@@ -51,11 +70,30 @@ def extract_225_floats(results):
     return np.array(frame_data, dtype=np.float32)
 
 
+def _count_sequences(label: str) -> int:
+    """Return how many .npy sequences already exist for *label*."""
+    label_dir = os.path.join(STORAGE_DIR, label)
+    if not os.path.isdir(label_dir):
+        return 0
+    return len([f for f in os.listdir(label_dir) if f.endswith('.npy')])
+
+
 def main():
-    print("="*50)
-    print("SignBridge - Standalone Data Collector")
-    print("="*50)
-    label = input("Enter the gesture label (e.g., 'hello', 'apwoyo'): ").strip().replace(' ', '_')
+    print("=" * 60)
+    print("SignBridge — Uganda Sign Language Data Collector")
+    print("=" * 60)
+
+    # Show collection progress summary
+    print("\nProgress summary (sequences collected so far):")
+    for sign in ALL_SIGNS:
+        count = _count_sequences(sign)
+        bar = "█" * min(count // 5, 12)
+        status = "✓" if count >= 30 else f"{count}/30"
+        print(f"  {sign:<22}  {status:>6}  {bar}")
+
+    print("\nEnter a sign label from the list above, or type any custom label.")
+    print("Tip: collect at least 30 sequences per sign (60+ recommended).")
+    label = input("\nGesture label: ").strip().lower().replace(' ', '_')
     
     label_dir = os.path.join(STORAGE_DIR, label)
     os.makedirs(label_dir, exist_ok=True)
