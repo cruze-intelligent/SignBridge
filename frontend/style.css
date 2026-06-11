@@ -480,6 +480,50 @@ details[open] .history-summary::before { transform:rotate(90deg); }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--surf-3); border-radius:4px; }
 
+/* ── Settings Panel ─────────────────────────────────────────────────────── */
+#settings-overlay {
+  position:fixed; inset:0; z-index:200;
+  background:rgba(7,8,15,.78); backdrop-filter:blur(6px);
+  display:flex; align-items:flex-end; justify-content:center;
+  animation:fade-in .25s ease;
+}
+#settings-overlay[hidden] { display:none; }
+.settings-panel {
+  width:100%; max-width:480px;
+  background:var(--surf-1); border-top:1px solid var(--border);
+  border-radius:var(--r-xl) var(--r-xl) 0 0;
+  padding:24px 20px calc(var(--nav-h) + 24px);
+  position:relative;
+  animation:slide-up .3s var(--ease-expo);
+}
+.settings-field { display:flex; flex-direction:column; gap:10px; margin-bottom:20px; }
+.settings-label { font-weight:600; font-size:.9rem; color:var(--text-hi); }
+.settings-hint  { font-size:.8rem; color:var(--text-mid); line-height:1.5; }
+.settings-hint code { background:var(--surf-3); padding:1px 5px; border-radius:4px; font-family:monospace; color:var(--cyan); }
+.settings-input {
+  width:100%; padding:12px 14px; border-radius:var(--r-md);
+  background:var(--surf-2); border:1px solid var(--border);
+  color:var(--text-hi); font-family:monospace; font-size:.85rem;
+  outline:none; transition:border-color .2s;
+}
+.settings-input:focus { border-color:var(--purple); }
+.settings-row { display:flex; gap:10px; }
+.settings-info { font-size:.8rem; color:var(--text-mid); }
+.settings-mono { font-family:monospace; color:var(--cyan); word-break:break-all; }
+
+/* ── Games nav link ─────────────────────────────────────────────────────── */
+a.nav-item {
+  text-decoration:none;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  flex:1; gap:4px; padding:6px 0;
+  font-size:.65rem; font-weight:500; letter-spacing:.03em; text-transform:uppercase;
+  color:var(--text-lo); transition:color .2s;
+  cursor:pointer;
+}
+a.nav-item svg { transition:color .2s; }
+a.nav-item:hover,
+a.nav-item:focus-visible { color:var(--cyan); }
+
 /* ── Desktop centred card ───────────────────────────────────────────────── */
 @media (min-width:480px) {
   body { background:#070810; }

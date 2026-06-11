@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🤟 Sign Language Recogniser
+# 🤟 SignBridge
 
-**A real-time, decoupled Acholi / English Sign Language recognition pipeline**  
+**Real-time Uganda Sign Language recognition — English & Acholi translation**  
 *MediaPipe · WebSockets · FastAPI · Bidirectional LSTM · TensorFlow*
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -17,7 +17,7 @@
 
 ## 📖 Overview
 
-The Sign Language Recogniser is a production-grade, low-latency gesture recognition system designed to bridge communication gaps for Acholi and English speakers. The pipeline runs entirely in the browser for pre-processing (zero server-side camera access required) and streams compact, normalised landmark arrays to a high-throughput Python backend for real-time inference.
+SignBridge bridges communication gaps for Acholi and English speakers by translating Uganda Sign Language (USL) gestures into bilingual text in real time.  All landmark extraction happens in the browser — only 225 floats per frame cross the wire to a lightweight Python inference backend.
 
 ---
 
@@ -25,7 +25,7 @@ The Sign Language Recogniser is a production-grade, low-latency gesture recognit
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                    CLIENT  (Browser)                         │
+│                    CLIENT  (Browser / GitHub Pages)          │
 │                                                              │
 │  Webcam  ──►  MediaPipe Holistic  ──►  225-float array/frame │
 │                                                              │
@@ -36,13 +36,13 @@ The Sign Language Recogniser is a production-grade, low-latency gesture recognit
 │  Zero-pad missing hands • Nose-anchor normalisation          │
 │  30-frame sliding window buffer                              │
 │                                                              │
-│         ▼  WebSocket (binary JSON)  ▼                        │
+│         ▼  WebSocket (wss://)  ▼                             │
 └──────────────────────────────────────────────────────────────┘
                          │
-                    ws://localhost:8000
+               wss://<your-backend>
                          │
 ┌──────────────────────────────────────────────────────────────┐
-│                    SERVER  (Python)                          │
+│                    SERVER  (Python — Render / Railway)       │
 │                                                              │
 │  FastAPI  ──►  WebSocket router  ──►  Inference Engine       │
 │                    │                      │                   │
@@ -53,68 +53,35 @@ The Sign Language Recogniser is a production-grade, low-latency gesture recognit
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Key design decisions
-
-| Concern | Decision | Rationale |
-|---|---|---|
-| Landmark extraction | Browser-side MediaPipe Holistic | Eliminates raw video transmission; only 225 floats/frame cross the wire |
-| Transport | WebSocket (persistent) | Sub-20 ms round-trip vs HTTP polling |
-| Normalisation | Coordinates relative to nose anchor | Invariant to camera distance and subject position |
-| Missing tracking | Zero-pad 63-float block | Maintains strict tensor shape `(30, 225)` at all times |
-| Persistence | NumPy `.npy` files | Optimal for downstream Transformer model retraining |
-| ML framework | TensorFlow / Keras | Native GPU acceleration; straightforward LSTM API |
-
----
-
-## 🧠 ML Model
-
-The inference model is a stacked **Bidirectional LSTM** network (`SignLanguageLSTM_v2`) trained on gesture sequences captured through the data-collection pipeline.
-
-```
-Input  : (batch, 30, 225)
-         └─ 30 frames × (RH-63 + LH-63 + Pose-99)
-
-BiLSTM-1 : 128 units, return_sequences=True
-BiLSTM-2 :  64 units, return_sequences=True
-LSTM-3   :  64 units, return_sequences=False
-
-Dense-1  : 128  → BatchNorm → ReLU → Dropout(0.4)
-Dense-2  :  64  → BatchNorm → ReLU → Dropout(0.3)
-Output   :  N   → Softmax   (N = dynamic class count)
-```
-
-Training callbacks: `EarlyStopping (patience=15)`, `ModelCheckpoint (best val_accuracy)`, `ReduceLROnPlateau`.
-
 ---
 
 ## 📁 Project Structure
 
 ```
-Final Year Project/
+SignBridge/
 ├── frontend/
-│   ├── index.html          # Vanilla HTML — bilingual UI (English / Acholi)
-│   ├── style.css           # Mobile-first, high-contrast accessible design
-│   └── app.js              # MediaPipe Holistic integration, WS client, buffer logic
+│   ├── index.html          # Bilingual UI (English / Acholi) — deployable to GitHub Pages
+│   ├── style.css           # Mobile-first dark theme, WCAG-AA compliant
+│   └── app.js              # MediaPipe pipeline, WS client, settings panel
 │
 └── backend/
-    ├── run.py              # Uvicorn entry-point
+    ├── run.py              # Uvicorn entry-point (reads PORT env var)
+    ├── Procfile            # Render / Railway deployment
+    ├── .env.example        # Environment variable reference
     ├── requirements.txt
     ├── app/
-    │   ├── main.py         # FastAPI factory, CORS, lifespan hooks
-    │   ├── inference.py    # Model loader — inject Keras model here
-    │   ├── persistence.py  # .npy sequence serialisation & storage
+    │   ├── main.py         # FastAPI factory, CORS (ALLOWED_ORIGINS env var), lifespan
+    │   ├── inference.py    # Model loader + predict_sequence()
+    │   ├── persistence.py  # .npy sequence serialisation
     │   ├── schemas.py      # Pydantic request/response models
     │   └── routers/
-    │       ├── ws_landmarks.py    # WebSocket endpoint (real-time streaming)
-    │       └── rest_landmarks.py  # REST endpoint (batch submission)
-    ├── ml/
-    │   ├── collect_data.py  # Step 1 — capture gesture sequences
-    │   ├── prepare_data.py  # Step 2 — build train/test splits
-    │   └── train.py         # Step 3 — train Bidirectional LSTM
-    ├── models/
-    │   └── .gitkeep         # Weights committed separately / ignored by git
-    └── storage/
-        └── sequences/       # Runtime .npy files — git-ignored
+    │       ├── ws_landmarks.py    # WebSocket endpoint — real-time inference
+    │       └── rest_landmarks.py  # REST endpoint — batch submission
+    └── ml/
+        ├── usl_vocabulary.py  # ★ Canonical USL sign list + collection guide
+        ├── collect_data.py    # Step 1 — capture gesture sequences via webcam
+        ├── prepare_data.py    # Step 2 — build train/test splits
+        └── train.py           # Step 3 — train Bidirectional LSTM
 ```
 
 ---
@@ -123,53 +90,137 @@ Final Year Project/
 
 ### Prerequisites
 
-- Python ≥ 3.10
-- A modern browser with WebRTC support (Chrome / Edge recommended)
-- *(Optional)* CUDA-capable GPU for faster training
+- Python ≥ 3.10, ≤ 3.12 (TensorFlow not yet compatible with 3.13+)
+- A modern browser with WebRTC (Chrome / Edge recommended)
+- *(Optional)* CUDA GPU for faster model training
 
 ### 1 — Backend setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/<your-org>/sign-language-recogniser.git
-cd sign-language-recogniser
+git clone https://github.com/<your-org>/SignBridge.git
+cd SignBridge
 
-# Create and activate virtual environment
 python -m venv backend/.venv
-# Windows
-backend\.venv\Scripts\activate
-# macOS / Linux
-source backend/.venv/bin/activate
+source backend/.venv/bin/activate   # Windows: backend\.venv\Scripts\activate
 
-# Install dependencies
 pip install -r backend/requirements.txt
 ```
 
-### 2 — Start the server
+### 2 — Start the backend
 
 ```bash
 python backend/run.py
-# FastAPI + Uvicorn starts on http://localhost:8000
-# Interactive API docs: http://localhost:8000/docs
+# API available at http://localhost:8000
+# Interactive docs: http://localhost:8000/docs
 ```
 
 ### 3 — Open the frontend
 
-Simply open `frontend/index.html` in your browser.  
+Open `frontend/index.html` directly in your browser.  
 No build step required — pure Vanilla JS.
+
+---
+
+## 🌐 Deployment (GitHub Pages + Render)
+
+The frontend is a static site — it deploys to GitHub Pages with zero configuration.  
+The backend runs as a free web service on Render (or Railway / Fly.io).
+
+### Frontend → GitHub Pages
+
+1. Push the `frontend/` directory to a GitHub repository.
+2. Go to **Settings → Pages → Source: Deploy from branch** and select `main` / `frontend`.
+3. Your app will be live at `https://<username>.github.io/<repo>/`.
+
+### Backend → Render (free tier)
+
+1. Create a new **Web Service** on [render.com](https://render.com) pointing at this repo.
+2. Set **Root Directory** to `backend`.
+3. Set **Build Command**: `pip install -r requirements.txt`
+4. Set **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1`
+5. Add these **Environment Variables**:
+
+   | Key               | Value                                          |
+   |---|---|
+   | `ENV`             | `production`                                   |
+   | `ALLOWED_ORIGINS` | `https://<username>.github.io`                 |
+
+6. Copy the `https://your-service.onrender.com` URL.
+
+### Connect the frontend to the live backend
+
+Option A — **URL query param** (no rebuild needed):
+```
+https://<username>.github.io/<repo>/?backend=wss://your-service.onrender.com/ws/landmarks
+```
+
+Option B — **In-app Settings panel**:  
+Tap the ⚙️ **Settings** icon in the bottom nav, paste the `wss://` URL, and tap **Save & Reconnect**.
+
+> **Note:** Render's free tier spins down after 15 minutes of inactivity.  
+> The first connection after spin-down may take ~30 seconds while the model loads.  
+> A [paid plan](https://render.com/pricing) or [Railway](https://railway.app) eliminates cold starts.
+
+---
+
+## 🧠 ML Model
+
+Stacked **Bidirectional LSTM** (`SignLanguageLSTM_v2`):
+
+```
+Input     : (batch, 30, 225)    — 30 frames × (RH-63 + LH-63 + Pose-99)
+BiLSTM-1  : 128 units, return_sequences=True
+BiLSTM-2  :  64 units, return_sequences=True
+LSTM-3    :  64 units, return_sequences=False
+Dense-1   : 128  → BatchNorm → ReLU → Dropout(0.4)
+Dense-2   :  64  → BatchNorm → ReLU → Dropout(0.3)
+Output    :  N   → Softmax   (N = number of trained classes)
+```
+
+---
+
+## 🎯 Uganda Sign Language Vocabulary
+
+The current training target covers **42 core USL gestures** organised by priority.  
+Run the vocabulary guide at any time:
+
+```bash
+python backend/ml/usl_vocabulary.py
+# Add --alphabet to include the A–Z finger-spelling set
+```
+
+| Priority | Category              | Signs |
+|---|---|---|
+| 1 | **Greetings**         | hello, goodbye, good_morning, good_night, how_are_you, i_am_fine, thank_you, please, sorry, welcome, congratulations, nice_to_meet_you |
+| 2 | **Basic Communication** | yes, no, help, stop, go, come, wait, understand, repeat, my_name_is |
+| 3 | **Feelings**          | good, bad, happy, love, hungry, tired |
+| 4 | **People**            | mother, father, brother, sister, friend, family, child |
+| 5 | **Numbers**           | one – ten |
+| 6 | **Everyday Nouns**    | water, food, home, school, hospital, road |
+| 7 | **Alphabet** *(optional)* | A – Z finger-spelling |
+
+### Data collection guidelines
+
+- Collect **≥ 30 sequences per sign** (60–100 recommended for production).
+- Use **multiple signers** to improve model generalisation.
+- Record in varied lighting and backgrounds.
+- Each sequence is 30 frames (~1 second at 30 fps).
 
 ---
 
 ## 🔬 Training Your Own Model
 
 ```bash
-# Step 1 — Collect gesture sequences (launches the capture UI)
+# Step 1 — View the USL vocabulary checklist
+python backend/ml/usl_vocabulary.py
+
+# Step 2 — Collect gesture sequences (launches a webcam window)
 python backend/ml/collect_data.py
 
-# Step 2 — Prepare train / test splits
+# Step 3 — Prepare train / test splits
 python backend/ml/prepare_data.py
 
-# Step 3 — Train the Bidirectional LSTM
+# Step 4 — Train the model
 python backend/ml/train.py --epochs 150 --batch-size 32 --lr 0.001
 
 # Outputs:
@@ -177,7 +228,7 @@ python backend/ml/train.py --epochs 150 --batch-size 32 --lr 0.001
 #   backend/models/training_history.json
 ```
 
-Restart the server after training — the model is hot-loaded from `backend/models/` on startup via the `[INFERENCE HOOK ACTIVATE]` block in `app/main.py`.
+Restart the backend after training — the model hot-loads on startup.
 
 ---
 
@@ -185,44 +236,53 @@ Restart the server after training — the model is hot-loaded from `backend/mode
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Liveness probe |
+| `GET` | `/health` | Liveness probe — returns `{"status":"ok"}` |
 | `GET` | `/docs` | Interactive Swagger UI |
-| `WS` | `/ws/landmarks` | Real-time 30-frame window stream |
-| `POST` | `/landmarks/batch` | Single-shot batch sequence submission |
+| `WS` | `/ws/landmarks` | Real-time 30-frame landmark stream |
+| `POST` | `/landmarks/batch` | Single-shot batch submission |
 
-WebSocket message format (client → server):
-
+WebSocket message (client → server):
 ```json
-{
-  "sequence": [[f1, f2, ..., f225], ...],   // 30 × 225 floats
-  "label": "hello"                           // optional — for data collection
-}
+{ "frame": [f0, f1, ..., f224] }
 ```
+
+WebSocket response (server → client):
+```json
+{ "status": "translated", "text": "hello" }
+```
+
+---
+
+## 🎮 Games Integration
+
+The bottom navigation includes a **Games** button that opens [SignMaster](https://cruze-intelligent.github.io/SignMaster/) — an interactive USL practice game.  
+SignMaster also serves as the reference dataset for USL gesture labels used during training.
 
 ---
 
 ## ♿ Accessibility
 
-- High-contrast UI with WCAG-AA compliant colour ratios
+- High-contrast dark UI with WCAG-AA colour ratios
 - Large tap targets (≥ 44 × 44 px) for mobile use
-- Step-by-step onboarding tutorial with floating help icons
-- Bilingual output: **English** and **Acholi** gesture labels
+- Step-by-step onboarding wizard + floating help button
+- Bilingual output: **English** and **Acholi (Luo)**
+- Web Speech API TTS reads each translation aloud
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Transformer encoder replacing the LSTM backbone
-- [ ] On-device TensorFlow Lite inference (offline mode)
-- [ ] Expanded Acholi gesture vocabulary (community-sourced dataset)
+- [ ] TensorFlow Lite export for fully offline inference
 - [ ] Progressive Web App (PWA) packaging
+- [ ] Expanded USL vocabulary via community-sourced recording sessions
 - [ ] Continuous retraining pipeline via GitHub Actions
+- [ ] Transformer encoder replacing the LSTM backbone
 
 ---
 
 ## 🤝 Contributing
 
-Pull requests are welcome. Please ensure all Python follows **PEP 8** and JavaScript is formatted with **Prettier** before opening a PR.
+PRs are welcome. Python should follow PEP 8; JavaScript should be formatted with Prettier.
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * SignBridge — app.js  (v3 — MediaPipe Holistic · 225-float pipeline)
+ * SignBridge — app.js  (v4 — Uganda Sign Language · configurable backend)
  *
  * Vanilla JS, no frameworks, no bundlers.
  *
@@ -8,12 +8,13 @@
  *   2.  Utils              — $(), $$(), showToast(), appendLog(), timeStr()
  *   3.  OnboardingWizard   — first-run 4-step tutorial
  *   4.  HelpDrawer         — floating ? FAB → bottom sheet
- *   5.  LandmarkPipeline   — 225-float extraction (Holistic results → array)
- *   6.  LandmarkBuffer     — 30-frame sliding window, auto-flush callback
- *   7.  WebSocketClient    — ws://localhost:8080/ws/landmarks + auto-reconnect
- *   8.  HolisticController — MediaPipe Holistic wrapper + canvas rendering
- *   9.  UIController       — state machine that wires all modules together
- *  10.  App.init()
+ *   5.  SettingsPanel      — backend URL configuration, persisted to localStorage
+ *   6.  LandmarkPipeline   — 225-float extraction (Holistic results → array)
+ *   7.  LandmarkBuffer     — 30-frame sliding window, auto-flush callback
+ *   8.  WebSocketClient    — configurable WS URL + auto-reconnect
+ *   9.  HolisticController — MediaPipe Holistic wrapper + canvas rendering
+ *  10.  UIController       — state machine that wires all modules together
+ *  11.  App.init()
  */
 
 'use strict';
@@ -21,9 +22,26 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    1. CONFIG
    ═══════════════════════════════════════════════════════════════════════ */
+/**
+ * Resolve the WebSocket URL.
+ * Priority: localStorage key → ?backend= query param → <meta> default → fallback.
+ */
+function resolveWsUrl() {
+  const stored = localStorage.getItem('sb_backend_url');
+  if (stored) return stored;
+
+  const param = new URLSearchParams(window.location.search).get('backend');
+  if (param) return param;
+
+  const meta = document.querySelector('meta[name="sb-default-ws"]');
+  if (meta?.content) return meta.content;
+
+  return 'ws://localhost:8000/ws/landmarks';
+}
+
 const CONFIG = Object.freeze({
   // ── Server ────────────────────────────────────────────────────────────
-  WS_URL:          'ws://localhost:8080/ws/landmarks',
+  WS_URL:          resolveWsUrl(),
   WS_RECONNECT_MS: 3_000,
 
   // ── 225-float frame spec (MUST match backend) ─────────────────────────
@@ -199,7 +217,61 @@ class HelpDrawer {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   5. LANDMARK PIPELINE
+   5. SETTINGS PANEL
+   Allows the user to override the backend WebSocket URL and save it to
+   localStorage — essential when the frontend is hosted on GitHub Pages and
+   the backend is deployed on a separate service (Render, Railway, Fly.io).
+   ═══════════════════════════════════════════════════════════════════════ */
+class SettingsPanel {
+  constructor() {
+    this._overlay     = $('#settings-overlay');
+    this._input       = $('#backend-url-input');
+    this._currentLbl  = $('#settings-current-url');
+    this._navSettings = $('#nav-settings');
+
+    $('#settings-close').addEventListener('click',     () => this.close());
+    $('#settings-save-url').addEventListener('click',  () => this._save());
+    $('#settings-reset-url').addEventListener('click', () => this._reset());
+    this._overlay.addEventListener('click', (e) => {
+      if (e.target === this._overlay) this.close();
+    });
+    this._navSettings.addEventListener('click', () => this.open());
+  }
+
+  open() {
+    this._input.value = localStorage.getItem('sb_backend_url') || CONFIG.WS_URL;
+    this._currentLbl.textContent = CONFIG.WS_URL;
+    this._overlay.removeAttribute('hidden');
+    this._overlay.removeAttribute('aria-hidden');
+    this._input.focus();
+  }
+
+  close() {
+    this._overlay.setAttribute('hidden', '');
+    this._overlay.setAttribute('aria-hidden', 'true');
+    this._navSettings.focus();
+  }
+
+  _save() {
+    const url = this._input.value.trim();
+    if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+      showToast('URL must start with ws:// or wss://', 'error');
+      return;
+    }
+    localStorage.setItem('sb_backend_url', url);
+    showToast('Backend URL saved — reloading…', 'success');
+    setTimeout(() => window.location.reload(), 1_000);
+  }
+
+  _reset() {
+    localStorage.removeItem('sb_backend_url');
+    showToast('Reset to default — reloading…', 'info');
+    setTimeout(() => window.location.reload(), 1_000);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. LANDMARK PIPELINE
    ──────────────────────────────────────────────────────────────────────────
    Converts one MediaPipe Holistic result into an exact 225-float array:
 
@@ -300,7 +372,7 @@ class LandmarkPipeline {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   6. LANDMARK BUFFER
+   7. LANDMARK BUFFER
    30-frame sliding window. Invokes the onFlush callback with a complete
    batch of frames each time it reaches CONFIG.FRAME_WINDOW entries.
    ═══════════════════════════════════════════════════════════════════════ */
@@ -351,8 +423,8 @@ class LandmarkBuffer {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   7. WEBSOCKET CLIENT
-   Manages the persistent connection to ws://localhost:8000/ws/landmarks.
+   8. WEBSOCKET CLIENT
+   Manages the persistent connection to the configured backend URL.
    Auto-reconnects every CONFIG.WS_RECONNECT_MS on unexpected closure.
    ═══════════════════════════════════════════════════════════════════════ */
 class WebSocketClient {
@@ -464,7 +536,7 @@ class WebSocketClient {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   8. HOLISTIC CONTROLLER
+   9. HOLISTIC CONTROLLER
    Initialises MediaPipe Holistic and the Camera utility.
    On every processed frame it calls LandmarkPipeline.extract() and emits
    the resulting 225-float array via the onFrame callback.
@@ -642,35 +714,71 @@ class HolisticController {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ACHOLI VOCABULARY (seed dictionary)
-   Expanded automatically once the backend inference engine is connected.
-   Keys are gesture labels in lowercase; values are Acholi translations.
+   ACHOLI VOCABULARY
+   Keys match backend gesture labels (lowercase/underscore).
+   Translations are community-verified Acholi (Luo) terms.
+   Entries marked ★ are Uganda Sign Language (USL) greetings confirmed via
+   the SignMaster reference dataset.
    ═══════════════════════════════════════════════════════════════════════ */
 const ACHOLI_DICT = {
-  hello:      'Iboŋo',
-  thank_you:  'Apwoyo matek',
-  my_name_is: 'Nyinga tye...',
-  how_are_you:'Kop ango',
+  // ── Greetings (USL-verified ★) ────────────────────────────────────────
+  hello:              'Iboŋo',           // ★
+  goodbye:            'Wot ki kuc',      // ★
+  good_morning:       'Odikinin maber',  // ★
+  good_night:         'Dyewor maber',    // ★
+  how_are_you:        'Ityeko nining',   // ★
+  i_am_fine:          'Atye maber',      // ★
+  thank_you:          'Apwoyo matek',    // ★
+  please:             'Alegi',
+  sorry:              'Tika',
+  welcome:            'Ibin matek',      // ★
+  congratulations:    'Gum ngolo',       // ★
+
+  // ── Basic responses ───────────────────────────────────────────────────
   yes:        'Eyo',
   no:         'Ku',
-  please:     'Alegi',
+
+  // ── Common verbs / actions ────────────────────────────────────────────
   help:       'Konnya',
-  water:      'Pi',
-  food:       'Cam',
-  good:       'Maber',
-  bad:        'Marac',
   stop:       'Juk',
   go:         'Cit',
   come:       'Bin',
   wait:       'Kur',
-  name:       'Nying',
-  sorry:      'Tika',
-  love:       'Maro',
-  friend:     'Gaŋ lareme',
-  family:     'Kaka',
   understand: 'Niang',
-  welcome:    'Ibin matek',
-  goodbye:    'Wot ki kuc',
+  repeat:     'Dok cobo',
+
+  // ── Identity ──────────────────────────────────────────────────────────
+  my_name_is: 'Nyinga tye',
+  name:       'Nying',
+
+  // ── Feelings ──────────────────────────────────────────────────────────
+  good:   'Maber',
+  bad:    'Marac',
+  happy:  'Yom cwinyi',
+  love:   'Maro',
+
+  // ── People ────────────────────────────────────────────────────────────
+  friend:  'Lareme',
+  family:  'Kaka',
+  mother:  'Mama',
+  father:  'Baba',
+  brother: 'Omin',
+  sister:  'Lamin',
+  child:   'Latin',
+
+  // ── Everyday nouns ────────────────────────────────────────────────────
+  water:  'Pii',
+  food:   'Cam',
+  home:   'Gang',
+  school: 'Cuk',
+  road:   'Yo',
+
+  // ── Numbers (Acholi) ─────────────────────────────────────────────────
+  one:   'Acel',
+  two:   'Ariyo',
+  three: 'Adek',
+  four:  'Aŋwen',
+  five:  'Abic',
 };
 
 function toAcholi(label) {
@@ -685,7 +793,7 @@ function toEnglish(label) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   9. UI CONTROLLER
+   10. UI CONTROLLER
    Central state machine. Owns the recording state and wires every module
    to the correct DOM elements in index.html.
    ═══════════════════════════════════════════════════════════════════════ */
@@ -710,13 +818,11 @@ class UIController {
     this._wsLabel = $('#ws-label');
 
     // ── Translation card ──────────────────────────────────────────────
-    this._outEn      = $('#out-english');
-    this._outAch     = $('#out-acholi');
-    this._transCard  = $('#trans-card');
-    this._achBlock   = $('#lang-ach-block');
-    this._langSep    = $('.lang-sep');
-    this._histList   = $('#history-list');
-    this._histCount  = $('#history-count');
+    this._outEn     = $('#out-english');
+    this._outAch    = $('#out-acholi');
+    this._transCard = $('#trans-card');
+    this._achBlock  = $('#lang-ach-block');
+    this._langSep   = $('.lang-sep');
 
     // ── Debug grid ────────────────────────────────────────────────────
     this._dbgTotal  = $('#dbg-total');
@@ -727,10 +833,9 @@ class UIController {
     this._dbgBuf    = $('#dbg-buf');
 
     // ── Internal state ────────────────────────────────────────────────
-    this._recording   = false;
-    this._wsSent      = 0;
-    this._showAcholi  = true;
-    this._histItems   = [];
+    this._recording  = false;
+    this._wsSent     = 0;
+    this._showAcholi = true;
 
     // ── Modules ───────────────────────────────────────────────────────
     this._buffer   = new LandmarkBuffer(CONFIG.FRAME_WINDOW);
@@ -889,25 +994,10 @@ class UIController {
     this._transCard.classList.add('highlight');
     setTimeout(() => this._transCard.classList.remove('highlight'), 1_600);
 
-    this._addToHistory(label, en, ach, frames);
     appendLog(`Translation: ${en} / ${ach}`, 'ok');
 
     // NEW: Speak the English translation aloud
     this._speakTranslation(en);
-  }
-
-  _addToHistory(label, en, ach) {
-    this._histItems.unshift({ label, en, ach });
-    this._histCount.textContent = this._histItems.length;
-
-    const li = document.createElement('li');
-    li.className = 'history-item';
-    li.innerHTML = `
-      <div class="hi-label">${label}</div>
-      <div class="hi-en">${en}</div>
-      <div class="hi-ach">${ach}</div>
-      <div class="hi-meta">${timeStr()} · 225-float</div>`;
-    this._histList.prepend(li);
   }
 
   // ── Copy & language toggle ───────────────────────────────────────────
@@ -968,7 +1058,7 @@ class UIController {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   10. APP INIT
+   11. APP INIT
    ═══════════════════════════════════════════════════════════════════════ */
 const App = {
   async init() {
@@ -978,6 +1068,9 @@ const App = {
 
     // Floating help drawer
     new HelpDrawer(wizard);
+
+    // Settings panel (backend URL config)
+    new SettingsPanel();
 
     // Main UI (also starts WS + Holistic)
     const ui = new UIController();
