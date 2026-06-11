@@ -6,7 +6,7 @@ Model-training script for the Acholi / English Sign-Language Recogniser.
 Architecture
 ------------
 A stacked Bidirectional-LSTM network inspired by the temporal-sequence pattern
-used in sign-language recognition projects (e.g. nicknochnack/ActionDetectionforSignLanguage).
+used in sign-language recognition projects.
 The model is updated to accept our 225-feature holistic landmark schema:
 
     Input  : (batch, 30, 225)
@@ -26,7 +26,7 @@ Usage
 
 Outputs
 -------
-    backend/models/sign_language_model_v2.h5   (best checkpoint, Keras H5)
+    backend/models/sign_language_model_v2.h5   (best checkpoint, H5)
     backend/models/training_history.json        (epoch-by-epoch metrics)
 """
 
@@ -122,32 +122,18 @@ def load_dataset(dataset_dir: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
 # Model builder
 # ---------------------------------------------------------------------------
 
-def build_model(num_classes: int) -> "tf.keras.Model":  # noqa: F821
+def build_model(num_classes: int) -> "Model":  # noqa: F821
     """
     Construct and return the compiled Bidirectional-LSTM model.
-
-    The architecture is directly inspired by temporal sequence recognition
-    systems for sign language:
-
-    * Three recurrent layers learn short-to-long temporal dependencies across
-      the 30-frame window.
-    * BatchNormalisation + Dropout after each Dense layer combat over-fitting
-      even with small datasets (common in minority-language sign corpora).
-    * Output units are set **dynamically** from ``num_classes`` so the model
-      generalises to any Acholi / English gesture vocabulary size.
-
-    Parameters
-    ----------
-    num_classes : int
-        Number of unique gesture classes in the training set.
-
-    Returns
-    -------
-    tf.keras.Model
-        Compiled model ready for ``.fit()``.
     """
-    import tensorflow as tf  # Deferred import – avoids slow startup if unused
-    from tensorflow.keras import layers, Model  # type: ignore[import-untyped]
+    import tensorflow as tf
+    import tensorflow.compat.v2
+    
+    # Bypass tf.keras bug by importing directly from keras
+    from keras import layers
+    from keras.models import Model
+    from keras import optimizers
+    from keras import metrics
 
     logger.info(
         "TensorFlow version: %s  |  GPU devices: %s",
@@ -175,9 +161,6 @@ def build_model(num_classes: int) -> "tf.keras.Model":  # noqa: F821
 
     # ------------------------------------------------------------------
     # Recurrent layers
-    #   Layer 1 & 2: Bidirectional-LSTM to capture temporal context from
-    #                both past and future within the 30-frame window.
-    #   Layer 3    : Unidirectional LSTM to compress to a fixed-size vector.
     # ------------------------------------------------------------------
     x = layers.Bidirectional(
         layers.LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
@@ -219,11 +202,11 @@ def build_model(num_classes: int) -> "tf.keras.Model":  # noqa: F821
     # Compile
     # ------------------------------------------------------------------
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        optimizer=optimizers.Adam(learning_rate=1e-3),
         loss="categorical_crossentropy",
         metrics=[
             "accuracy",
-            tf.keras.metrics.TopKCategoricalAccuracy(k=3, name="top3_accuracy"),
+            metrics.TopKCategoricalAccuracy(k=3, name="top3_accuracy"),
         ],
     )
 
@@ -236,68 +219,50 @@ def build_model(num_classes: int) -> "tf.keras.Model":  # noqa: F821
 # ---------------------------------------------------------------------------
 
 def train(
-    model: "tf.keras.Model",  # noqa: F821
+    model: "Model",  # noqa: F821
     X_train: np.ndarray,
     y_train: np.ndarray,
     epochs: int,
     batch_size: int,
     validation_split: float,
-) -> "tf.keras.callbacks.History":  # noqa: F821
+) -> "callbacks.History":  # noqa: F821
     """
     Fit the model with EarlyStopping and ModelCheckpoint callbacks.
-
-    Parameters
-    ----------
-    model           : compiled Keras model
-    X_train         : shape ``(N, 30, 225)``
-    y_train         : shape ``(N, num_classes)`` one-hot
-    epochs          : maximum training epochs
-    batch_size      : mini-batch size
-    validation_split: fraction of training data used for validation
-
-    Returns
-    -------
-    history : Keras History object
     """
-    import tensorflow as tf  # noqa: PLC0415
+    import tensorflow as tf
+    import tensorflow.compat.v2
+    
+    # Bypass tf.keras bug by importing callbacks directly
+    from keras import callbacks
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    callbacks = [
-        # ----------------------------------------------------------------
+    callbacks_list = [
         # Stop training when val_loss has not improved for 15 epochs.
-        # Restores best weights automatically.
-        # ----------------------------------------------------------------
-        tf.keras.callbacks.EarlyStopping(
+        callbacks.EarlyStopping(
             monitor="val_loss",
             patience=15,
             restore_best_weights=True,
             verbose=1,
         ),
-        # ----------------------------------------------------------------
         # Save the best model checkpoint to disk.
-        # ----------------------------------------------------------------
-        tf.keras.callbacks.ModelCheckpoint(
+        callbacks.ModelCheckpoint(
             filepath=str(MODEL_SAVE_PATH),
             monitor="val_accuracy",
             save_best_only=True,
             save_weights_only=False,
             verbose=1,
         ),
-        # ----------------------------------------------------------------
-        # Reduce LR on plateau for smoother convergence on small datasets.
-        # ----------------------------------------------------------------
-        tf.keras.callbacks.ReduceLROnPlateau(
+        # Reduce LR on plateau for smoother convergence.
+        callbacks.ReduceLROnPlateau(
             monitor="val_loss",
             factor=0.5,
             patience=7,
             min_lr=1e-6,
             verbose=1,
         ),
-        # ----------------------------------------------------------------
-        # TensorBoard logs (optional; view with `tensorboard --logdir logs`).
-        # ----------------------------------------------------------------
-        tf.keras.callbacks.TensorBoard(
+        # TensorBoard logs.
+        callbacks.TensorBoard(
             log_dir=str(MODELS_DIR / "logs"),
             histogram_freq=1,
         ),
@@ -316,7 +281,7 @@ def train(
         epochs=epochs,
         batch_size=batch_size,
         validation_split=validation_split,
-        callbacks=callbacks,
+        callbacks=callbacks_list,
         shuffle=True,
         verbose=2,  # One line per epoch – clean for CI/CD logs
     )
@@ -327,7 +292,7 @@ def train(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def save_history(history: "tf.keras.callbacks.History") -> None:  # noqa: F821
+def save_history(history: "callbacks.History") -> None:  # noqa: F821
     """Persist epoch-by-epoch metrics as JSON for later analysis."""
     serialisable = {k: [float(v) for v in vals] for k, vals in history.history.items()}
     HISTORY_SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -337,7 +302,7 @@ def save_history(history: "tf.keras.callbacks.History") -> None:  # noqa: F821
 
 
 def evaluate_on_test(
-    model: "tf.keras.Model",  # noqa: F821
+    model: "Model",  # noqa: F821
     dataset_dir: Path,
 ) -> None:
     """Load the test split and evaluate the best-saved model."""
@@ -427,6 +392,7 @@ def main() -> None:
     # Override compiled LR if a custom value was supplied via --lr
     # ------------------------------------------------------------------
     if args.lr != 1e-3:
+        # We can still safely import tf here to access the backend assignment
         import tensorflow as tf  # noqa: PLC0415
 
         model.optimizer.learning_rate.assign(args.lr)
