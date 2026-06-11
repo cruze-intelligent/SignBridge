@@ -36,12 +36,25 @@ def predict_sequence(model, sequence_array, label_map):
     confidence = predictions[predicted_idx]
     
     # ---------------------------------------------------------
-    # THE FIX: Print the model's exact thoughts to the terminal
+    # Diagnostics: print the top-3 predictions to the terminal
     # ---------------------------------------------------------
-    print(f"🧠 Model sees: '{label_map[predicted_idx]}' at {confidence * 100:.1f}% confidence")
-    
-    # Lowered the threshold from 0.70 to 0.40 to allow for real-world variance
-    if confidence > 0.40:
+    top3_idx = np.argsort(predictions)[::-1][:3]
+    top3_str  = "  |  ".join(
+        f"{label_map[i]} {predictions[i]*100:.1f}%" for i in top3_idx
+    )
+    print(f"🧠 Top-3: [ {top3_str} ]")
+
+    # --- Confidence threshold: must be above 70% ---
+    # The model scores 97.5% on test data, so low confidence = genuine ambiguity.
+    CONFIDENCE_THRESHOLD = 0.70
+
+    # --- Margin guard: top-2 gap must be > 20% ---
+    # Prevents near-tie false positives (e.g. 'you' vs 'thank_you' at 42% each).
+    second_idx = top3_idx[1]
+    margin = confidence - predictions[second_idx]
+    MARGIN_THRESHOLD = 0.20
+
+    if confidence > CONFIDENCE_THRESHOLD and margin > MARGIN_THRESHOLD:
         return label_map[predicted_idx]
-        
+
     return "..."

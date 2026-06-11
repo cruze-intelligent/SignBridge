@@ -11,9 +11,10 @@ async def websocket_landmarks(websocket: WebSocket):
     await websocket.accept()
     
     sequence_buffer = []
+    batch_count     = 0   # number of complete 30-frame batches evaluated this session
     
     # Retrieve the warmed-up model and label map from FastAPI's global state
-    model = websocket.app.state.model
+    model     = websocket.app.state.model
     label_map = getattr(websocket.app.state, 'label_map', [])
     
     try:
@@ -25,8 +26,9 @@ async def websocket_landmarks(websocket: WebSocket):
             if "action" in data:
                 action = data["action"]
                 if action in ["save", "end"]:
-                    # If you want to continue recording background data, call save_sequence_to_disk(sequence_buffer) here
-                    sequence_buffer = []  # Flush the buffer
+                    # Persist trailing frames if needed:
+                    # save_sequence_to_disk(sequence_buffer)
+                    sequence_buffer = []
                     await websocket.send_json({
                         "status": "saved" if action == "save" else "session_ended"
                     })
@@ -36,38 +38,66 @@ async def websocket_landmarks(websocket: WebSocket):
             
             # 2. Handle Live Data Streaming
             frame = data.get("frame")
-            if frame is not None:
-                # --- WIRETAP: Print exactly what is arriving ---
-                print(f"📡 Incoming frame -> Length: {len(frame)} | Buffer: {len(sequence_buffer) + 1}/30")
-
-                if len(frame) == 225:
-                    sequence_buffer.append(frame)
+            if frame is not None and len(frame) == 225:
+                sequence_buffer.append(frame)
+                print(
+                    f"[FRAME] {len(sequence_buffer):02d}/30  "
+                    f"(batch #{batch_count + 1})"
+                )
                 
-            # 3. The Inference Trigger (30-Frame Window)
+            # 3. Inference Trigger — fires on every complete 30-frame batch
+            #
+            # KEY DESIGN DECISION: We always flush the buffer after inference,
+            # whether or not a sign was detected.  This guarantees each inference
+            # call receives a temporally coherent sequence that exactly matches
+            # the 30-frame windows the model was trained on.
+            #
+            # The old sliding-window approach (pop(0)) created "chimera" windows
+            # spanning two different gestures, which the model had never seen
+            # during training, causing random false predictions.
             if len(sequence_buffer) == 30:
+                batch_count += 1
+
                 if model is not None:
                     sequence_array = np.array(sequence_buffer, dtype=np.float32)
                     
                     try:
-                        # Pass to the inference engine
                         prediction = predict_sequence(model, sequence_array, label_map)
                         
-                        # If a confident prediction is made, blast it back to the UI
                         if prediction != "...":
                             await websocket.send_json({
                                 "status": "translated",
                                 "text": prediction
                             })
-                            print(f"TRANSLATED: {prediction}")
+                            print(f"[OK] TRANSLATED (batch #{batch_count}): {prediction}")
+                        else:
+                            print(
+                                f"[--] Batch #{batch_count}: no confident prediction - "
+                                "buffer cleared, waiting for next gesture"
+                            )
                             
                     except Exception as e:
-                        print(f"🔥 INFERENCE CRASH: {e}")
+                        print(f"[ERR] INFERENCE CRASH (batch #{batch_count}): {e}")
                         await websocket.send_json({
                             "status": "error", 
                             "detail": f"Inference failed: {str(e)}"
                         })
                 
-                # Clear the buffer to start accumulating the next 30 frames
-                sequence_buffer = []  
+                # Always clear — never slide across gesture boundaries
+                sequence_buffer = []
+
     except WebSocketDisconnect:
-        print("WebSocket Client Disconnected.")
+        # Client disconnected cleanly — no action needed
+        print("[INFO] Client disconnected from /ws/landmarks")
+
+    except Exception as e:
+        # Unexpected error on the outer loop — log and attempt graceful close
+        print(f"[CRASH] WebSocket session crashed: {e}")
+        try:
+            await websocket.send_json({"status": "error", "detail": str(e)})
+            await websocket.close()
+        except Exception:
+            pass  # Socket may already be closed
+
+    finally:
+        print(f"[END] Session ended. Batches evaluated: {batch_count}. Buffer cleared.")
