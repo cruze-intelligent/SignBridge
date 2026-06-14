@@ -40,7 +40,8 @@ async def websocket_landmarks(websocket: WebSocket):
                         "status": "saved" if action == "save" else "session_ended"
                     })
                     if action == "end":
-                        break  # Close the connection cleanly
+                        await websocket.close(code=1000)
+                        break  # Close the connection cleanly (1000 = normal)
                 continue
             
             # 2. Handle Live Data Streaming

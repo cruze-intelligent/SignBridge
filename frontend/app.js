@@ -648,8 +648,16 @@ class HolisticController {
     // Notify UI of detection state (updates RH / LH / POSE chips)
     this.onDetect?.(rhDetected, lhDetected, poseDetected);
 
-    // Emit the frame only when the user is actively recording
-    if (this._active) {
+    // Emit the frame only when the user is actively recording AND pose is
+    // visible.  Pose detection is required because:
+    //   • The nose anchor (pose lm[0]) is what every hand coordinate is
+    //     normalised against — without it the frame is 225 zeros.
+    //   • Training data was always captured with the user fully in frame.
+    //   • A buffer full of zero-pose frames looks like nothing the model
+    //     was ever trained on, causing "..." on every batch.
+    // Frames where pose is absent are simply skipped; the buffer waits for
+    // 30 valid frames before triggering inference.
+    if (this._active && poseDetected) {
       this.onFrame?.(frame, { rhDetected, lhDetected, poseDetected });
     }
   }
