@@ -1014,6 +1014,12 @@ class UIController {
       appendLog(`← Backend: ${data.detail ?? 'ready'}`, 'ok');
       return;
     }
+    if (data.status === 'processing') {
+      // Heartbeat from backend — batch evaluated but below confidence threshold.
+      // Logged quietly so it's visible in diagnostics without spamming the UI.
+      appendLog('← processing (no confident prediction this window)', 'info');
+      return;
+    }
     if (data.status === 'translated' && data.text) {
       this._showTranslation(data.text);
     }

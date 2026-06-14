@@ -79,6 +79,10 @@ async def websocket_landmarks(websocket: WebSocket):
                             })
                             print(f"[OK] TRANSLATED (batch #{batch_count}): {prediction}")
                         else:
+                            # Heartbeat — resets Railway's proxy idle-timeout (~60 s).
+                            # Fires once per 30-frame window so the connection stays
+                            # alive even during long pauses between gestures.
+                            await websocket.send_json({"status": "processing"})
                             print(
                                 f"[--] Batch #{batch_count}: no confident prediction - "
                                 "buffer cleared, waiting for next gesture"
