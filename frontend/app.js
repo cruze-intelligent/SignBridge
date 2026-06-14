@@ -36,7 +36,7 @@ function resolveWsUrl() {
   const meta = document.querySelector('meta[name="sb-default-ws"]');
   if (meta?.content) return meta.content;
 
-  return 'ws://localhost:8080/ws/landmarks';
+  return 'wss://signbridge-production-e51c.up.railway.app/ws/landmarks';
 }
 
 const CONFIG = Object.freeze({
