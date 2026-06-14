@@ -9,7 +9,14 @@ router = APIRouter()
 @router.websocket("/ws/landmarks")
 async def websocket_landmarks(websocket: WebSocket):
     await websocket.accept()
-    
+
+    # Immediately confirm the bridge is open so the frontend knows
+    # the WSS handshake completed (critical when proxied via Railway).
+    await websocket.send_json({
+        "status": "connected",
+        "detail": "SignBridge backend is listening...",
+    })
+
     sequence_buffer = []
     batch_count     = 0   # number of complete 30-frame batches evaluated this session
     
