@@ -4,7 +4,7 @@ import tensorflow as tf
 
 # Define paths relative to this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "sign_language_model_v2.h5")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "sign_language_model_v3.h5")
 LABEL_MAP_PATH = os.path.join(BASE_DIR, "ml", "dataset", "label_map.npy")
 
 def load_inference_assets():

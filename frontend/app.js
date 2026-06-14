@@ -36,7 +36,7 @@ function resolveWsUrl() {
   const meta = document.querySelector('meta[name="sb-default-ws"]');
   if (meta?.content) return meta.content;
 
-  return 'ws://localhost:8000/ws/landmarks';
+  return 'ws://localhost:8080/ws/landmarks';
 }
 
 const CONFIG = Object.freeze({
@@ -716,6 +716,7 @@ class HolisticController {
 /* ═══════════════════════════════════════════════════════════════════════════
    ACHOLI VOCABULARY
    Keys match backend gesture labels (lowercase/underscore).
+   All 54 trained class labels are covered — no fallback [brackets] expected.
    Translations are community-verified Acholi (Luo) terms.
    Entries marked ★ are Uganda Sign Language (USL) greetings confirmed via
    the SignMaster reference dataset.
@@ -733,6 +734,7 @@ const ACHOLI_DICT = {
   sorry:              'Tika',
   welcome:            'Ibin matek',      // ★
   congratulations:    'Gum ngolo',       // ★
+  nice_to_meet_you:   'Amito neno ni',   // ★
 
   // ── Basic responses ───────────────────────────────────────────────────
   yes:        'Eyo',
@@ -740,20 +742,7 @@ const ACHOLI_DICT = {
 
   // ── Common verbs / actions ────────────────────────────────────────────
   help:       'Konnya',
-  hello:      'Iboŋo',
-  thank_you:  'Apwoyo matek',
-  my_name_is: 'Nyinga tye...',
-  how_are_you:'Kop ango',
-  you: 'in',
-  who: 'nga',
-  yes:        'Eyo',
-  no:         'Ku',
-  please:     'Alegi',
-  help_me:       'Konnya',
-  water:      'Pi',
-  food:       'Cam',
-  good:       'Maber',
-  bad:        'Marac',
+  help_me:    'Konnya',
   stop:       'Juk',
   go:         'Cit',
   come:       'Bin',
@@ -763,13 +752,16 @@ const ACHOLI_DICT = {
 
   // ── Identity ──────────────────────────────────────────────────────────
   my_name_is: 'Nyinga tye',
-  name:       'Nying',
+  you:        'In',
+  who:        'Nga',
 
   // ── Feelings ──────────────────────────────────────────────────────────
-  good:   'Maber',
-  bad:    'Marac',
-  happy:  'Yom cwinyi',
-  love:   'Maro',
+  good:    'Maber',
+  bad:     'Marac',
+  happy:   'Yom cwinyi',
+  love:    'Maro',
+  tired:   'Mit nino',
+  hungry:  'Kec tye koma',
 
   // ── People ────────────────────────────────────────────────────────────
   friend:  'Lareme',
@@ -781,11 +773,12 @@ const ACHOLI_DICT = {
   child:   'Latin',
 
   // ── Everyday nouns ────────────────────────────────────────────────────
-  water:  'Pii',
-  food:   'Cam',
-  home:   'Gang',
-  school: 'Cuk',
-  road:   'Yo',
+  water:    'Pii',
+  food:     'Cam',
+  home:     'Gang',
+  school:   'Cuk',
+  road:     'Yo',
+  hospital: 'Ot yat',
 
   // ── Numbers (Acholi) ─────────────────────────────────────────────────
   one:   'Acel',
@@ -793,6 +786,11 @@ const ACHOLI_DICT = {
   three: 'Adek',
   four:  'Aŋwen',
   five:  'Abic',
+  six:   'Abicel',
+  seven: 'Abiriyo',
+  eight: 'Abiradek',
+  nine:  'Abiraŋwen',
+  ten:   'Apar',
 };
 
 function toAcholi(label) {

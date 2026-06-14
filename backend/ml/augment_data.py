@@ -277,7 +277,7 @@ def augment_class(
 
     if n_total >= target_count:
         logger.info(
-            "  %-15s : %d real + %d aug = %d  (≥ target %d) — skipping",
+            "  %-15s : %d real + %d aug = %d  (>= target %d) - skipping",
             label_dir.name, n_real, n_existing_aug, n_total, target_count,
         )
         return 0

@@ -3,20 +3,25 @@ train.py
 ========
 Model-training script for the Acholi / English Sign-Language Recogniser.
 
-Architecture
-------------
-A stacked Bidirectional-LSTM network inspired by the temporal-sequence pattern
-used in sign-language recognition projects.
-The model is updated to accept our 225-feature holistic landmark schema:
+Architecture  (v3 — BiLSTM + Self-Attention)
+--------------------------------------------
+A hybrid Bidirectional-LSTM + Multi-Head Self-Attention network.
+Self-attention is inserted after the second BiLSTM so the model can
+explicitly learn *which of the 30 frames* are most discriminative for
+each gesture, rather than relying solely on the LSTM hidden state.
 
-    Input  : (batch, 30, 225)
-              30 frames × (Right-Hand 63 + Left-Hand 63 + Pose 99)
-    Layer 1: Bidirectional LSTM 128 units, return_sequences=True
-    Layer 2: Bidirectional LSTM  64 units, return_sequences=True
-    Layer 3: LSTM  64 units, return_sequences=False
-    Dense 1: 128 units, ReLU + BatchNorm + Dropout(0.4)
-    Dense 2: 64  units, ReLU + BatchNorm + Dropout(0.3)
-    Output : Dense(num_classes, softmax)
+    Input        : (batch, 30, 225)
+                    30 frames × (Right-Hand 63 + Left-Hand 63 + Pose 99)
+    BiLSTM-1     : 128 units, return_sequences=True   → (batch, 30, 256)
+    BiLSTM-2     :  64 units, return_sequences=True   → (batch, 30, 128)
+    ─── ATTENTION BLOCK ───────────────────────────────────────────────
+    MHA          : 4 heads × key_dim 32, dropout=0.1  → (batch, 30, 128)
+    Add & Norm   : residual connection + LayerNorm     → (batch, 30, 128)
+    ────────────────────────────────────────────────────────────────────
+    GlobalAvgPool: collapses temporal dim              → (batch, 128)
+    Dense-1      : 128 units, ReLU + BatchNorm + Dropout(0.4)
+    Dense-2      :  64 units, ReLU + BatchNorm + Dropout(0.3)
+    Output       : Dense(num_classes, softmax)
 
 The number of output units is determined dynamically from the loaded dataset.
 
@@ -26,7 +31,7 @@ Usage
 
 Outputs
 -------
-    backend/models/sign_language_model_v2.h5   (best checkpoint, H5)
+    backend/models/sign_language_model_v3.h5   (best checkpoint, H5)
     backend/models/training_history.json        (epoch-by-epoch metrics)
 """
 
@@ -46,7 +51,7 @@ import numpy as np
 _HERE: Path = Path(__file__).resolve().parent
 DATASET_DIR: Path = _HERE / "dataset"
 MODELS_DIR: Path = _HERE.parent / "models"
-MODEL_SAVE_PATH: Path = MODELS_DIR / "sign_language_model_v2.h5"
+MODEL_SAVE_PATH: Path = MODELS_DIR / "sign_language_model_v3.h5"
 HISTORY_SAVE_PATH: Path = MODELS_DIR / "training_history.json"
 
 # ---------------------------------------------------------------------------
@@ -124,11 +129,23 @@ def load_dataset(dataset_dir: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
 
 def build_model(num_classes: int) -> "Model":  # noqa: F821
     """
-    Construct and return the compiled Bidirectional-LSTM model.
+    Construct and return the compiled BiLSTM + Self-Attention model (v3).
+
+    Key change vs v2
+    ----------------
+    After BiLSTM-2 (which outputs a full sequence of shape (batch, 30, 128)),
+    a Multi-Head Self-Attention block is inserted.  The attention lets the
+    model learn to focus on the most discriminative frames within each
+    30-frame gesture window, rather than relying solely on the LSTM's final
+    hidden state to summarise the sequence.
+
+    The final LSTM-3 layer is replaced by GlobalAveragePooling1D, which
+    collapses the temporal dimension after attention has already reweighted
+    the frame representations.  This is both more expressive and faster.
     """
     import tensorflow as tf
     import tensorflow.compat.v2
-    
+
     # Bypass tf.keras bug by importing directly from keras
     from keras import layers
     from keras.models import Model
@@ -160,22 +177,56 @@ def build_model(num_classes: int) -> "Model":  # noqa: F821
     )
 
     # ------------------------------------------------------------------
-    # Recurrent layers
+    # Recurrent layers  (unchanged from v2)
     # ------------------------------------------------------------------
     x = layers.Bidirectional(
         layers.LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
         name="bilstm_1",
     )(inputs)
+    # Output shape: (batch, 30, 256)  — 128 units × 2 directions
 
     x = layers.Bidirectional(
         layers.LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
         name="bilstm_2",
     )(x)
-
-    x = layers.LSTM(64, return_sequences=False, name="lstm_3")(x)
+    # Output shape: (batch, 30, 128)  — 64 units × 2 directions
 
     # ------------------------------------------------------------------
-    # Dense classification head
+    # Self-Attention block  (NEW in v3)
+    #
+    # Multi-Head Attention with:
+    #   num_heads = 4    — 4 parallel attention heads
+    #   key_dim   = 32   — 128 / 4  (standard split keeps param count low)
+    #   dropout   = 0.1  — applied to the attention weights
+    #
+    # Residual connection + LayerNorm ("Pre-LN" style, stable training):
+    #   attn_out = MHA(x, x)          # self-attention: query = key = value = x
+    #   x        = LayerNorm(x + attn_out)   # residual keeps gradient flow healthy
+    # ------------------------------------------------------------------
+    attn_out = layers.MultiHeadAttention(
+        num_heads=4,
+        key_dim=32,
+        dropout=0.1,
+        name="self_attention",
+    )(x, x)  # query=x, value=x  →  self-attention over the 30 timesteps
+
+    x = layers.Add(name="attn_residual")([x, attn_out])
+    x = layers.LayerNormalization(epsilon=1e-6, name="attn_norm")(x)
+    # Output shape: (batch, 30, 128)  — same as BiLSTM-2 output
+
+    # ------------------------------------------------------------------
+    # Temporal collapse  (replaces LSTM-3 from v2)
+    #
+    # GlobalAveragePooling1D averages across the 30 (now attention-weighted)
+    # frame representations.  This is simpler and faster than LSTM-3 while
+    # being more expressive because attention has already done the hard work
+    # of selecting which frames matter.
+    # ------------------------------------------------------------------
+    x = layers.GlobalAveragePooling1D(name="temporal_pool")(x)
+    # Output shape: (batch, 128)
+
+    # ------------------------------------------------------------------
+    # Dense classification head  (unchanged from v2)
     # ------------------------------------------------------------------
     x = layers.Dense(128, name="dense_1")(x)
     x = layers.BatchNormalization(name="bn_1")(x)
@@ -196,7 +247,7 @@ def build_model(num_classes: int) -> "Model":  # noqa: F821
         name="gesture_output",
     )(x)
 
-    model = Model(inputs=inputs, outputs=outputs, name="SignLanguageLSTM_v2")
+    model = Model(inputs=inputs, outputs=outputs, name="SignLanguageLSTM_v3")
 
     # ------------------------------------------------------------------
     # Compile
@@ -422,6 +473,7 @@ def main() -> None:
 
     logger.info("-" * 60)
     logger.info("Best model saved to : %s", MODEL_SAVE_PATH)
+    logger.info("Architecture        : SignLanguageLSTM_v3 (BiLSTM + Self-Attention)")
     logger.info("Training complete.")
     logger.info("=" * 60)
 
