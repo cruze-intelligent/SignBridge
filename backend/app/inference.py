@@ -2,24 +2,50 @@ import os
 import numpy as np
 import tensorflow as tf
 
+# ---------------------------------------------------------------------------
+# Compatibility shim — older .h5 checkpoints serialise `time_major=False`
+# which TF 2.16+ LSTM no longer accepts.  The shim silently drops it.
+# ---------------------------------------------------------------------------
+class _LSTMCompat(tf.keras.layers.LSTM):
+    """LSTM subclass that ignores unsupported kwargs from legacy .h5 files."""
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("time_major", None)   # drop the offending kwarg
+        super().__init__(*args, **kwargs)
+
+
 # Define paths relative to this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "sign_language_model_v3.h5")
 LABEL_MAP_PATH = os.path.join(BASE_DIR, "ml", "dataset", "label_map.npy")
 
+
 def load_inference_assets():
     """Loads the trained model and the dynamically generated label map."""
     print(f"Loading model from {MODEL_PATH}...")
-    model = tf.keras.models.load_model(MODEL_PATH)
-    
-    # Perform a dummy prediction to 'warm up' the model in memory
+
+    # Use the compat shim to absorb the `time_major` kwarg that TF 2.16+
+    # no longer accepts on the LSTM constructor.
+    custom_objects = {"LSTM": _LSTMCompat}
+    model = tf.keras.models.load_model(
+        MODEL_PATH,
+        custom_objects=custom_objects,
+        compile=False,   # skip re-compiling; we only need inference
+    )
+    # Recompile with a minimal setup so model() calls work
+    model.compile(
+        optimizer="adam",
+        loss="categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    # Warm-up: one dummy forward pass to JIT-compile the compute graph
     dummy_input = np.zeros((1, 30, 225), dtype=np.float32)
     model.predict(dummy_input, verbose=0)
-    
+
     print(f"Loading label map from {LABEL_MAP_PATH}...")
     labels = np.load(LABEL_MAP_PATH, allow_pickle=True)
     label_map = [str(lbl) for lbl in labels]
-    
+
     print(f"Inference assets loaded! Classes: {label_map}")
     return model, label_map
 

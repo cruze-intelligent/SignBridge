@@ -502,16 +502,19 @@ class WebSocketClient {
 
   /**
    * Stream an array of 225-float frames as individual per-frame messages.
-   * Wire format: { frame: number[225] }
+   * Wire format: { frame: number[225], frame_index: number }
+   *
+   * `frame_index` (0-based) lets the backend reassemble frames in their
+   * correct temporal order regardless of WebSocket delivery order.
    *
    * @param {number[][]} frames
    * @returns {number} count of messages actually sent
    */
   streamFrames(frames) {
     let sent = 0;
-    for (const frame of frames) {
-      if (this.send({ frame })) sent++;
-    }
+    frames.forEach((frame, index) => {
+      if (this.send({ frame, frame_index: index })) sent++;
+    });
     return sent;
   }
 

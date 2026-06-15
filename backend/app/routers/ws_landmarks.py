@@ -1,10 +1,14 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import numpy as np
 from app.inference import predict_sequence
-# If you have your persistence module for saving .npy files, import it here
-# from app.persistence import save_sequence_to_disk 
+# from app.persistence import save_sequence_to_disk
 
 router = APIRouter()
+
+# Number of frames that constitute one gesture window — must match
+# the training configuration (SEQUENCE_LENGTH in train.py).
+WINDOW_SIZE: int = 30
+
 
 @router.websocket("/ws/landmarks")
 async def websocket_landmarks(websocket: WebSocket):
@@ -17,99 +21,116 @@ async def websocket_landmarks(websocket: WebSocket):
         "detail": "SignBridge backend is listening...",
     })
 
-    sequence_buffer = []
-    batch_count     = 0   # number of complete 30-frame batches evaluated this session
-    
+    # -----------------------------------------------------------------------
+    # Indexed frame slots  (dict[int, list[float]])
+    #
+    # The frontend can send frames in any order when multiple async tasks race
+    # over the WebSocket.  Keying by `frame_index` (0-based, 0-29) lets us
+    # reassemble the correct temporal sequence regardless of arrival order.
+    #
+    # If the frontend sends frames WITHOUT a `frame_index` field (legacy mode)
+    # we fall back to a simple append list so older clients keep working.
+    # -----------------------------------------------------------------------
+    frame_slots: dict[int, list] = {}   # indexed delivery (new clients)
+    frame_list:  list[list]      = []   # ordered append  (legacy clients)
+    batch_count: int             = 0
+
     # Retrieve the warmed-up model and label map from FastAPI's global state
     model     = websocket.app.state.model
-    label_map = getattr(websocket.app.state, 'label_map', [])
-    
+    label_map = getattr(websocket.app.state, "label_map", [])
+
     try:
         while True:
-            # Await incoming JSON payload from the Vanilla JS client
             data = await websocket.receive_json()
-            
-            # 1. Handle UI Controls (Start/Stop/Save)
+
+            # ── 1. UI Controls (start / stop / save) ──────────────────────
             if "action" in data:
                 action = data["action"]
-                if action in ["save", "end"]:
-                    # Persist trailing frames if needed:
-                    # save_sequence_to_disk(sequence_buffer)
-                    sequence_buffer = []
+                if action in ("save", "end"):
+                    frame_slots.clear()
+                    frame_list.clear()
                     await websocket.send_json({
                         "status": "saved" if action == "save" else "session_ended"
                     })
                     if action == "end":
                         await websocket.close(code=1000)
-                        break  # Close the connection cleanly (1000 = normal)
+                        break
                 continue
-            
-            # 2. Handle Live Data Streaming
-            frame = data.get("frame")
-            if frame is not None and len(frame) == 225:
-                sequence_buffer.append(frame)
-                print(
-                    f"[FRAME] {len(sequence_buffer):02d}/30  "
-                    f"(batch #{batch_count + 1})"
-                )
-                
-            # 3. Inference Trigger — fires on every complete 30-frame batch
-            #
-            # KEY DESIGN DECISION: We always flush the buffer after inference,
-            # whether or not a sign was detected.  This guarantees each inference
-            # call receives a temporally coherent sequence that exactly matches
-            # the 30-frame windows the model was trained on.
-            #
-            # The old sliding-window approach (pop(0)) created "chimera" windows
-            # spanning two different gestures, which the model had never seen
-            # during training, causing random false predictions.
-            if len(sequence_buffer) == 30:
-                batch_count += 1
 
-                if model is not None:
-                    sequence_array = np.array(sequence_buffer, dtype=np.float32)
-                    
-                    try:
-                        prediction = predict_sequence(model, sequence_array, label_map)
-                        
-                        if prediction != "...":
-                            await websocket.send_json({
-                                "status": "translated",
-                                "text": prediction
-                            })
-                            print(f"[OK] TRANSLATED (batch #{batch_count}): {prediction}")
-                        else:
-                            # Heartbeat — resets Railway's proxy idle-timeout (~60 s).
-                            # Fires once per 30-frame window so the connection stays
-                            # alive even during long pauses between gestures.
-                            await websocket.send_json({"status": "processing"})
-                            print(
-                                f"[--] Batch #{batch_count}: no confident prediction - "
-                                "buffer cleared, waiting for next gesture"
-                            )
-                            
-                    except Exception as e:
-                        print(f"[ERR] INFERENCE CRASH (batch #{batch_count}): {e}")
-                        await websocket.send_json({
-                            "status": "error", 
-                            "detail": f"Inference failed: {str(e)}"
-                        })
-                
-                # Always clear — never slide across gesture boundaries
-                sequence_buffer = []
+            # ── 2. Incoming landmark frame ─────────────────────────────────
+            frame = data.get("frame")
+            if frame is None or len(frame) != 225:
+                continue   # malformed payload — skip silently
+
+            frame_index: int | None = data.get("frame_index")  # 0-based
+
+            if frame_index is not None:
+                # ── Indexed mode: slot the frame, no duplicates ──────────
+                frame_slots[frame_index] = frame
+                filled = len(frame_slots)
+                print(f"[FRAME] slot {frame_index+1:02d}/{WINDOW_SIZE}  "
+                      f"({filled} filled, batch #{batch_count + 1})")
+                ready = filled == WINDOW_SIZE
+                if ready:
+                    # Reconstruct in temporal order
+                    sequence_array = np.array(
+                        [frame_slots[i] for i in range(WINDOW_SIZE)],
+                        dtype=np.float32,
+                    )
+                    frame_slots.clear()
+            else:
+                # ── Legacy append mode ───────────────────────────────────
+                frame_list.append(frame)
+                print(f"[FRAME] {len(frame_list):02d}/{WINDOW_SIZE}  "
+                      f"(batch #{batch_count + 1})")
+                ready = len(frame_list) == WINDOW_SIZE
+                if ready:
+                    sequence_array = np.array(frame_list, dtype=np.float32)
+                    frame_list.clear()
+
+            # ── 3. Inference — fires when a complete window is assembled ──
+            if not ready:
+                continue
+
+            batch_count += 1
+
+            if model is None:
+                # Model not loaded — send heartbeat to keep connection alive
+                await websocket.send_json({"status": "processing"})
+                print(f"[--] Batch #{batch_count}: no model loaded")
+                continue
+
+            try:
+                prediction = predict_sequence(model, sequence_array, label_map)
+
+                if prediction != "...":
+                    await websocket.send_json({
+                        "status": "translated",
+                        "text": prediction,
+                    })
+                    print(f"[OK] TRANSLATED (batch #{batch_count}): {prediction}")
+                else:
+                    # Heartbeat: resets Railway's 60-second proxy idle-timeout
+                    await websocket.send_json({"status": "processing"})
+                    print(f"[--] Batch #{batch_count}: below confidence threshold")
+
+            except Exception as exc:
+                print(f"[ERR] INFERENCE CRASH (batch #{batch_count}): {exc}")
+                await websocket.send_json({
+                    "status": "error",
+                    "detail": f"Inference failed: {exc}",
+                })
 
     except WebSocketDisconnect:
-        # Client disconnected cleanly — no action needed
         print("[INFO] Client disconnected from /ws/landmarks")
 
-    except Exception as e:
-        # Unexpected error on the outer loop — log and attempt graceful close
-        print(f"[CRASH] WebSocket session crashed: {e}")
+    except Exception as exc:
+        print(f"[CRASH] WebSocket session crashed: {exc}")
         try:
-            await websocket.send_json({"status": "error", "detail": str(e)})
+            await websocket.send_json({"status": "error", "detail": str(exc)})
             await websocket.close()
         except Exception:
-            pass  # Socket may already be closed
+            pass
 
     finally:
-        print(f"[END] Session ended. Batches evaluated: {batch_count}. Buffer cleared.")
+        print(f"[END] Session ended. Batches evaluated: {batch_count}.")
