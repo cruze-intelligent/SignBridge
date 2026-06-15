@@ -45,19 +45,21 @@ htmlcov/
 backend/storage/sequences/
 
 # Compiled dataset splits (re-generated from sequences by prepare_data.py).
-backend/ml/dataset/*.npy
-backend/ml/dataset/*.json
-!backend/ml/dataset/.gitkeep
-
 # Trained model weights and TensorBoard logs (large binary artefacts).
-backend/models/*.h5
-backend/models/*.keras
-backend/models/*.weights.h5
+# *.h5 and *.keras are tracked so Railway can load them at runtime.
+# X_train / X_test splits and training history remain ignored (re-generatable).
 backend/models/logs/
 backend/models/training_history.json
 !backend/models/.gitkeep
 
+# Dataset splits — large, re-generatable from sequences.
+# label_map.npy and label_map.json ARE tracked (required for inference).
+backend/ml/dataset/X_*.npy
+backend/ml/dataset/y_*.npy
+!backend/ml/dataset/label_map.npy
+!backend/ml/dataset/label_map.json
 # =============================================================================
+
 # Frontend
 # =============================================================================
 
@@ -97,3 +99,7 @@ Desktop.ini
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+
+.codex_deps/
+report_rebuild/

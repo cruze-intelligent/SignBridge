@@ -16,14 +16,14 @@ storage/sequences/
 .vscode/
 *.swp
 
-# ML — dataset splits (large, re-generatable from sequences)
-ml/dataset/*.npy
-ml/dataset/*.json
-!ml/dataset/.gitkeep
+# ML — large dataset splits (re-generatable from sequences)
+# X_train / X_test / y_train / y_test are excluded; label_map files ARE tracked.
+ml/dataset/X_*.npy
+ml/dataset/y_*.npy
 
-# ML — trained model weights (large binary artefacts)
-models/*.h5
-models/*.keras
+# ML — training artefacts not needed at runtime
 models/logs/
 models/training_history.json
-!models/.gitkeep
+
+# model weights (*.h5, *.keras) are intentionally tracked so Railway
+# can load them at startup — do NOT add them back here.
