@@ -14,11 +14,15 @@ the augmented copies alongside the originals so that
 
 Available augmentation strategies
 ----------------------------------
-1. gaussian_noise     — adds tiny per-frame positional jitter (σ ≈ 0.004)
+1. gaussian_noise     — adds per-frame positional jitter (σ ≈ 0.010)
 2. temporal_warp      — resamples frames to simulate signing faster / slower
-3. spatial_scale      — scales hand coords by ±10 % (hand distance variation)
+3. spatial_scale      — scales hand coords by ±20 % (hand distance variation)
 4. mirror_flip        — negates x-coords and swaps RH ↔ LH blocks
 5. temporal_shift     — shifts the gesture 2–5 frames earlier / later with edge padding
+6. rotation_jitter    — small 2D rotation (±12°) around wrist to simulate head/hand tilt
+7. landmark_dropout   — randomly zeroes 1–4 landmarks per frame (tracking-loss resilience)
+8. coord_jitter       — independent per-landmark noise (σ varies by landmark type)
+9. speed_perturbation — non-linear temporal warping (variable speed within the sequence)
 
 Usage
 -----
@@ -78,12 +82,13 @@ logger = logging.getLogger(__name__)
 
 def aug_gaussian_noise(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """
-    Add tiny per-frame Gaussian noise to all coordinates.
+    Add per-frame Gaussian noise to all coordinates.
 
     Simulates natural hand tremor and mediapipe tracking micro-jitter.
-    Noise std is intentionally small (0.004) so the gesture shape is preserved.
+    Noise std is moderate (0.010) to force the model to learn gesture
+    *shape* rather than memorising exact coordinate values.
     """
-    noise = rng.normal(loc=0.0, scale=0.004, size=seq.shape).astype(np.float32)
+    noise = rng.normal(loc=0.0, scale=0.010, size=seq.shape).astype(np.float32)
     # Zero-padded frames (all zeros) should stay zero — don't noise them
     zero_mask = (seq == 0.0)
     result = seq + noise
@@ -128,7 +133,7 @@ def aug_temporal_warp(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 def aug_spatial_scale(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """
-    Scale hand landmark coordinates by a random factor in [0.88, 1.12].
+    Scale hand landmark coordinates by a random factor in [0.80, 1.25].
 
     Simulates the signer's hand being closer to or farther from the camera,
     changing the apparent hand size relative to the body.
@@ -136,7 +141,7 @@ def aug_spatial_scale(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     Only the hand blocks (RH + LH) are scaled — pose stays untouched so the
     body anchor reference remains consistent.
     """
-    scale = rng.uniform(0.88, 1.12)
+    scale = rng.uniform(0.80, 1.25)
     result = seq.copy()
     # Scale both hand blocks together so relative RH/LH proportions hold
     result[:, RH_START:LH_END] *= scale  # covers [0:126] = RH + LH
@@ -207,6 +212,170 @@ def aug_temporal_shift(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return result.astype(np.float32)
 
 
+# ===========================================================================
+#  NEW augmentation transforms (v2 — low-data regime boosters)
+# ===========================================================================
+
+def aug_rotation_jitter(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """
+    Apply a small 2D rotation (±12°) to hand landmarks around the wrist.
+
+    Simulates natural wrist rotation and slight camera/head tilt.  Only the
+    (x, y) components of each hand landmark are rotated; z is untouched.
+    Pose landmarks are left unchanged so the body anchor stays stable.
+    """
+    angle_deg = rng.uniform(-12.0, 12.0)
+    angle_rad = np.radians(angle_deg)
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+
+    result = seq.copy()
+
+    for block_start, block_end in [(RH_START, RH_END), (LH_START, LH_END)]:
+        # Compute the centroid of the hand block to rotate around it
+        # (effectively rotating around the wrist/palm centre)
+        x_indices = list(range(block_start, block_end, 3))      # x at 0, 3, 6, …
+        y_indices = list(range(block_start + 1, block_end, 3))  # y at 1, 4, 7, …
+
+        for t in range(NUM_FRAMES):
+            # Skip zero-padded frames (hand not detected)
+            if np.all(result[t, block_start:block_end] == 0.0):
+                continue
+
+            xs = result[t, x_indices]
+            ys = result[t, y_indices]
+            cx, cy = xs.mean(), ys.mean()
+
+            # Rotate around centroid
+            dx, dy = xs - cx, ys - cy
+            result[t, x_indices] = cx + dx * cos_a - dy * sin_a
+            result[t, y_indices] = cy + dx * sin_a + dy * cos_a
+
+    return result
+
+
+def aug_landmark_dropout(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """
+    Randomly zero-out 1–4 landmarks per frame to simulate MediaPipe tracking loss.
+
+    In production, MediaPipe frequently loses individual finger-tip landmarks
+    for 1-2 frames — especially in low-light or fast-motion conditions.  By
+    training on sequences with sporadic landmark dropout, the model learns to
+    be robust to these partial-visibility frames rather than misclassifying.
+
+    Only hand landmarks are dropped (not pose) because pose is rarely lost
+    while hands are visible.
+    """
+    result = seq.copy()
+    n_drop = int(rng.integers(1, 5))  # 1–4 landmarks to drop per frame
+
+    # Total hand landmarks: 21 (RH) + 21 (LH) = 42, each with 3 coords
+    hand_landmark_count = (RH_END - RH_START + LH_END - LH_START) // 3  # = 42
+
+    for t in range(NUM_FRAMES):
+        # Pick which landmarks to drop (indices 0–41 across both hands)
+        drop_indices = rng.choice(hand_landmark_count, size=n_drop, replace=False)
+
+        for lm_idx in drop_indices:
+            if lm_idx < 21:
+                # Right hand landmark
+                start = RH_START + lm_idx * 3
+            else:
+                # Left hand landmark
+                start = LH_START + (lm_idx - 21) * 3
+            result[t, start:start + 3] = 0.0
+
+    return result
+
+
+def aug_coord_jitter(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """
+    Per-landmark noise with varying sigma by landmark type.
+
+    Finger tips (landmarks 4, 8, 12, 16, 20 in each hand) get 2× the noise
+    of palm/wrist landmarks because MediaPipe tracks them less reliably.
+    Pose landmarks get very low noise (σ = 0.003) to preserve body anchor.
+    """
+    result = seq.copy()
+
+    # Finger-tip landmark indices within each 21-landmark hand block
+    finger_tip_offsets = [4, 8, 12, 16, 20]
+
+    for block_start, block_end in [(RH_START, RH_END), (LH_START, LH_END)]:
+        for lm in range(21):
+            col_start = block_start + lm * 3
+            col_end = col_start + 3
+            sigma = 0.016 if lm in finger_tip_offsets else 0.008
+            noise = rng.normal(0.0, sigma, size=(NUM_FRAMES, 3)).astype(np.float32)
+            # Don't noise zero-padded landmarks
+            mask = np.all(result[:, col_start:col_end] == 0.0, axis=1)
+            noise[mask] = 0.0
+            result[:, col_start:col_end] += noise
+
+    # Light noise on pose
+    pose_noise = rng.normal(0.0, 0.003, size=(NUM_FRAMES, POSE_END - POSE_START)).astype(np.float32)
+    pose_mask = np.all(result[:, POSE_START:POSE_END] == 0.0, axis=1)
+    pose_noise[pose_mask] = 0.0
+    result[:, POSE_START:POSE_END] += pose_noise
+
+    return result
+
+
+def aug_speed_perturbation(seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """
+    Non-linear temporal warping — variable speed within the same sequence.
+
+    Instead of a uniform rate change (like temporal_warp), this splits the
+    30-frame sequence into 3 segments and applies a different speed factor
+    to each.  The result simulates realistic signing patterns: slow start,
+    fast middle, slow end (or vice versa).
+    """
+    n_segments = 3
+    seg_len = NUM_FRAMES // n_segments  # 10 frames per segment
+
+    # Generate per-segment speed factors
+    speeds = rng.uniform(0.65, 1.45, size=n_segments)
+
+    # Build a non-linear time mapping
+    original_times = np.linspace(0, 1, NUM_FRAMES)
+    new_times = []
+    for seg_idx in range(n_segments):
+        start_frame = seg_idx * seg_len
+        end_frame = start_frame + seg_len if seg_idx < n_segments - 1 else NUM_FRAMES
+        n = end_frame - start_frame
+        # Map this segment's frames through a speed factor
+        segment_duration = n / speeds[seg_idx]
+        new_times.extend(np.linspace(0, 1, max(2, int(round(segment_duration)))))
+
+    # Normalise new_times to [0, 1] and resample back to exactly 30 frames
+    new_times = np.array(new_times)
+    new_times = (new_times - new_times[0]) / (new_times[-1] - new_times[0] + 1e-8)
+
+    # Resample to exactly NUM_FRAMES positions
+    target_times = np.linspace(0, 1, NUM_FRAMES)
+
+    from scipy.interpolate import interp1d as _interp1d
+    # Build interpolator from new_times → feature values
+    # First map new_times back to original frame positions
+    frame_positions = np.linspace(0, NUM_FRAMES - 1, len(new_times))
+    orig_interpolator = _interp1d(
+        np.linspace(0, 1, NUM_FRAMES), seq, axis=0,
+        kind="linear", fill_value="extrapolate",
+    )
+
+    # Sample at the warped positions
+    warped_positions = np.interp(target_times, new_times, frame_positions / (NUM_FRAMES - 1))
+    warped_positions = warped_positions * (NUM_FRAMES - 1)
+
+    result_interpolator = _interp1d(
+        np.arange(NUM_FRAMES), seq, axis=0,
+        kind="linear", fill_value="extrapolate",
+    )
+    result = result_interpolator(np.clip(warped_positions, 0, NUM_FRAMES - 1))
+
+    return result.astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Registry: maps transform name → function
 # All transforms have the same signature: (seq, rng) → augmented_seq
@@ -217,6 +386,10 @@ TRANSFORMS: dict = {
     "scale":    aug_spatial_scale,
     "flip":     aug_mirror_flip,
     "shift":    aug_temporal_shift,
+    "rotate":   aug_rotation_jitter,
+    "drop":     aug_landmark_dropout,
+    "jitter":   aug_coord_jitter,
+    "speed":    aug_speed_perturbation,
 }
 
 
@@ -299,8 +472,10 @@ def augment_class(
         # 1. Pick a random source sequence
         source = real_seqs[rng.integers(0, n_real)]
 
-        # 2. Pick 1 or 2 transforms to chain (chaining adds extra diversity)
-        n_transforms = rng.choice([1, 1, 1, 2], p=[0.5, 0.2, 0.1, 0.2])
+        # 2. Pick 1–3 transforms to chain (chaining adds combinatorial diversity)
+        #    With 9 transforms, chaining 2 or 3 is safe and dramatically
+        #    increases the effective augmentation space.
+        n_transforms = rng.choice([1, 2, 3], p=[0.45, 0.40, 0.15])
         chosen = rng.choice(transform_names, size=n_transforms, replace=False)
 
         augmented = source.copy()
@@ -335,8 +510,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target",
         type=int,
-        default=100,
-        help="Target number of sequences per class (real + augmented). Default: 100",
+        default=200,
+        help="Target number of sequences per class (real + augmented). Default: 200",
     )
     parser.add_argument(
         "--seed",

@@ -268,7 +268,7 @@ def main() -> None:
     # 2. Stack into a single NumPy tensor: (N, 30, 225)
     # ------------------------------------------------------------------
     X: np.ndarray = np.stack(raw_sequences, axis=0)  # (N, 30, 225)
-    logger.info("Combined feature tensor X shape: %s", X.shape)
+    logger.info("Combined sequence tensor X shape: %s", X.shape)
 
     # ------------------------------------------------------------------
     # 3. Encode labels → one-hot
@@ -282,11 +282,11 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 4. Stratified train / test split
+    # 4. Stratified train / test split (split sequences first to prevent leakage)
     #    Falls back to non-stratified if any class has < 2 samples.
     # ------------------------------------------------------------------
     try:
-        X_train, X_test, y_train, y_test = train_test_split(
+        X_train_seq, X_test_seq, y_train_seq, y_test_seq = train_test_split(
             X,
             y_onehot,
             test_size=args.test_size,
@@ -300,12 +300,20 @@ def main() -> None:
             "Falling back to non-stratified split – collect more samples per class.",
             exc,
         )
-        X_train, X_test, y_train, y_test = train_test_split(
+        X_train_seq, X_test_seq, y_train_seq, y_test_seq = train_test_split(
             X,
             y_onehot,
             test_size=args.test_size,
             random_state=args.random_state,
         )
+
+    # ------------------------------------------------------------------
+    # 4b. Flatten sequences so every frame is an independent training sample
+    # ------------------------------------------------------------------
+    X_train = X_train_seq.reshape(-1, EXPECTED_FEATURES)
+    X_test  = X_test_seq.reshape(-1, EXPECTED_FEATURES)
+    y_train = np.repeat(y_train_seq, EXPECTED_FRAMES, axis=0)
+    y_test  = np.repeat(y_test_seq, EXPECTED_FRAMES, axis=0)
 
     # ------------------------------------------------------------------
     # 5. Save finalised splits

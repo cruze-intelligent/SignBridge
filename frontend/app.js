@@ -44,6 +44,7 @@ const CONFIG = Object.freeze({
   WS_URL:          resolveWsUrl(),
   WS_RECONNECT_MS: 3_000,
 
+
   // ── 225-float frame spec (MUST match backend) ─────────────────────────
   //   Right Hand : 21 landmarks × (x, y, z) =  63 floats
   //   Left  Hand : 21 landmarks × (x, y, z) =  63 floats
@@ -57,7 +58,7 @@ const CONFIG = Object.freeze({
   FRAME_SIZE:        225,   // total per frame
 
   // ── Sequence buffer ───────────────────────────────────────────────────
-  FRAME_WINDOW:       30,   // flush every N frames
+  FRAME_WINDOW:        1,   // flush every N frames
 
   // ── Pose landmark indices (MediaPipe Holistic convention) ─────────────
   NOSE_IDX:            0,   // used as spatial-normalisation anchor
@@ -552,6 +553,10 @@ class HolisticController {
     this._holistic = null;
     this._camera   = null;
 
+    // Offscreen canvas to avoid WebGL context errors when passing <video> directly to MediaPipe
+    this._offscreenCanvas = document.createElement('canvas');
+    this._offscreenCtx = this._offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
     // Set true only while recording — gates the onFrame emission
     this._active = false;
 
@@ -586,6 +591,7 @@ class HolisticController {
     });
 
     this._holistic.setOptions({
+      selfieMode:             true,   // MANDATORY: aligns extraction with backend cv2.flip(frame, 1)
       modelComplexity:        CONFIG.MODEL_COMPLEXITY,
       smoothLandmarks:        true,
       enableSegmentation:     false,
@@ -601,7 +607,14 @@ class HolisticController {
     try {
       this._camera = new Camera(this._video, {
         onFrame: async () => {
-          await this._holistic.send({ image: this._video });
+          const w = this._video.videoWidth || 640;
+          const h = this._video.videoHeight || 480;
+          if (this._offscreenCanvas.width !== w) {
+            this._offscreenCanvas.width = w;
+            this._offscreenCanvas.height = h;
+          }
+          this._offscreenCtx.drawImage(this._video, 0, 0, w, h);
+          await this._holistic.send({ image: this._offscreenCanvas });
         },
         width: 640, height: 480,
         facingMode: 'user',
@@ -832,8 +845,9 @@ function toEnglish(label) {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   10. UI CONTROLLER
+   11. UI CONTROLLER
    Central state machine. Owns the recording state and wires every module
    to the correct DOM elements in index.html.
    ═══════════════════════════════════════════════════════════════════════ */
@@ -876,11 +890,14 @@ class UIController {
     this._recording  = false;
     this._wsSent     = 0;
     this._showAcholi = true;
+    this._sentenceEn = "";
+    this._sentenceAch = "";
+    this._lastAppended = "";
 
     // ── Modules ───────────────────────────────────────────────────────
-    this._buffer   = new LandmarkBuffer(CONFIG.FRAME_WINDOW);
-    this._ws       = new WebSocketClient(CONFIG.WS_URL);
-    this._holistic = new HolisticController();
+    this._buffer          = new LandmarkBuffer(CONFIG.FRAME_WINDOW);
+    this._ws              = new WebSocketClient(CONFIG.WS_URL);
+    this._holistic        = new HolisticController();
 
     this._wire();
   }
@@ -923,6 +940,29 @@ class UIController {
     this._btnStart.addEventListener('click', () => this._startRecording());
     this._btnStop.addEventListener('click',  () => this._stopRecording());
     this._btnCopy.addEventListener('click',  () => this._copyTranslation());
+
+    // ── Sentence Builder Buttons ──────────────────────────────────────
+    $('#btn-space')?.addEventListener('click', () => {
+      this._sentenceEn += " ";
+      this._sentenceAch += " ";
+      this._outEn.textContent = this._sentenceEn;
+      this._outAch.textContent = this._sentenceAch;
+    });
+    $('#btn-clear')?.addEventListener('click', () => {
+      let wordsEn = this._sentenceEn.trim().split(" ");
+      wordsEn.pop();
+      this._sentenceEn = wordsEn.join(" ") + (wordsEn.length > 0 ? " " : "");
+
+      let wordsAch = this._sentenceAch.trim().split(" ");
+      wordsAch.pop();
+      this._sentenceAch = wordsAch.join(" ") + (wordsAch.length > 0 ? " " : "");
+
+      this._outEn.textContent = this._sentenceEn || "Waiting for gesture…";
+      this._outAch.textContent = this._sentenceAch || "Kur me twero nyutt coc…";
+    });
+    $('#btn-speak')?.addEventListener('click', () => {
+      if (this._sentenceEn.trim()) this._speakTranslation(this._sentenceEn);
+    });
 
     // ── Language toggle ───────────────────────────────────────────────
     $('#lang-toggle-btn').addEventListener('click', () => this._toggleLang());
@@ -1021,6 +1061,7 @@ class UIController {
       // Heartbeat from backend — batch evaluated but below confidence threshold.
       // Logged quietly so it's visible in diagnostics without spamming the UI.
       appendLog('← processing (no confident prediction this window)', 'info');
+      this._lastAppended = ""; // Reset dedup so same sign can be repeated
       return;
     }
     if (data.status === 'translated' && data.text) {
@@ -1040,17 +1081,24 @@ class UIController {
     const en  = toEnglish(label);
     const ach = toAcholi(label);
 
-    this._outEn.textContent  = en;
-    this._outAch.textContent = ach;
+    if (this._lastAppended === en) return; // Prevent 30fps spam of same sign
+    this._lastAppended = en;
+
+    // Append to sentences
+    this._sentenceEn = (this._sentenceEn + " " + en).trim();
+    this._sentenceAch = (this._sentenceAch + " " + ach).trim();
+
+    this._outEn.textContent  = this._sentenceEn;
+    this._outAch.textContent = this._sentenceAch;
     this._btnCopy.disabled   = false;
 
     // Briefly highlight the card
     this._transCard.classList.add('highlight');
     setTimeout(() => this._transCard.classList.remove('highlight'), 1_600);
 
-    appendLog(`Translation: ${en} / ${ach}`, 'ok');
+    appendLog(`Translation appended: ${en} / ${ach}`, 'ok');
 
-    // NEW: Speak the English translation aloud
+    // Speak the individual translation aloud as immediate feedback
     this._speakTranslation(en);
   }
 

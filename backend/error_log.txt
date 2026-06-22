@@ -1,0 +1,6 @@
+CRASH DETECTED IN COLLECTION SCRIPT:
+Traceback (most recent call last):
+  File "D:\Final Year Project\backend\ml\collect_data.py", line 140, in main
+    ret, frame = cap.read()
+cv2.error: OpenCV(4.13.0) D:\a\opencv-python\opencv-python\opencv\modules\core\src\matrix.cpp:434: error: (-215:Assertion failed) _step >= minstep in function 'cv::Mat::Mat'
+

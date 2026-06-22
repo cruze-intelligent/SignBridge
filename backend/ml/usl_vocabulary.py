@@ -29,127 +29,40 @@ Signs cross-checked against the SignMaster USL dataset
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# Greetings  (priority 1 — collect these first)
+# One-Handed Phrases
 # ---------------------------------------------------------------------------
-GREETINGS: list[str] = [
-    "hello",
-    "goodbye",
-    "good_morning",
-    "good_night",
-    "how_are_you",
-    "i_am_fine",
-    "thank_you",
-    "please",
-    "sorry",
-    "welcome",
-    "congratulations",
-    "nice_to_meet_you",
-]
-
-# ---------------------------------------------------------------------------
-# Basic communication  (priority 2)
-# ---------------------------------------------------------------------------
-BASIC_COMMUNICATION: list[str] = [
-    "yes",
-    "no",
-    "help",
-    "stop",
-    "go",
-    "come",
-    "wait",
-    "understand",
-    "repeat",
-    "my_name_is",
-]
-
-# ---------------------------------------------------------------------------
-# Feelings & states  (priority 3)
-# ---------------------------------------------------------------------------
-FEELINGS: list[str] = [
-    "good",
-    "bad",
-    "happy",
-    "love",
-    "hungry",
-    "tired",
-]
-
-# ---------------------------------------------------------------------------
-# People & relationships  (priority 4)
-# ---------------------------------------------------------------------------
-PEOPLE: list[str] = [
-    "mother",
-    "father",
-    "brother",
-    "sister",
-    "friend",
-    "family",
-    "child",
+PHRASES: list[str] = [
+    "right_hand",
 ]
 
 # ---------------------------------------------------------------------------
 # Numbers  (priority 5)
 # ---------------------------------------------------------------------------
 NUMBERS: list[str] = [
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-    "eight",
-    "nine",
-    "ten",
-]
-
-# ---------------------------------------------------------------------------
-# Everyday nouns  (priority 6)
-# ---------------------------------------------------------------------------
-NOUNS: list[str] = [
-    "water",
-    "food",
-    "home",
-    "school",
-    "hospital",
-    "road",
+    "one", "two", "three", "four", "five",
+    "six", "seven", "eight", "nine", "ten",
 ]
 
 # ---------------------------------------------------------------------------
 # Alphabet  (priority 7 — finger-spelling)
 # ---------------------------------------------------------------------------
-ALPHABET: list[str] = [f"letter_{c}" for c in "abcdefghijklmnopqrstuvwxyz"]
+ALPHABET: list[str] = [c.upper() for c in "abcdefghijklmnopqrstuvwxyz"]
 
 # ---------------------------------------------------------------------------
 # Flat list — all labels in recommended collection order
 # ---------------------------------------------------------------------------
-ALL_SIGNS: list[str] = (
-    GREETINGS
-    + BASIC_COMMUNICATION
-    + FEELINGS
-    + PEOPLE
-    + NUMBERS
-    + NOUNS
-)
-
-# Alphabet kept separate because it requires many more sequences to
-# distinguish similar hand-shapes (e.g. a/e, m/n, r/u/v).
-ALL_SIGNS_WITH_ALPHABET: list[str] = ALL_SIGNS + ALPHABET
+ALL_SIGNS: list[str] = ALPHABET + NUMBERS + PHRASES
+ALL_SIGNS_WITH_ALPHABET: list[str] = ALL_SIGNS
 
 
 def print_collection_guide(include_alphabet: bool = False) -> None:
     """Print a formatted data-collection checklist to stdout."""
     target = ALL_SIGNS_WITH_ALPHABET if include_alphabet else ALL_SIGNS
     categories = {
-        "Greetings (collect first)":     GREETINGS,
-        "Basic Communication":           BASIC_COMMUNICATION,
-        "Feelings & States":             FEELINGS,
-        "People & Relationships":        PEOPLE,
-        "Numbers":                       NUMBERS,
-        "Everyday Nouns":               NOUNS,
+        "Alphabet (finger-spelling)": ALPHABET,
+        "Numbers": NUMBERS,
+        "Phrases": PHRASES,
     }
-    if include_alphabet:
-        categories["Alphabet (finger-spelling)"] = ALPHABET
 
     print("=" * 60)
     print("SignBridge — Uganda Sign Language Collection Guide")

@@ -1,13 +1,12 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import numpy as np
-from app.inference import predict_sequence
+from app.inference import predict_frame
 # from app.persistence import save_sequence_to_disk
 
 router = APIRouter()
 
-# Number of frames that constitute one gesture window — must match
-# the training configuration (SEQUENCE_LENGTH in train.py).
-WINDOW_SIZE: int = 30
+# For static model, we process 1 frame at a time.
+WINDOW_SIZE: int = 1
 
 
 @router.websocket("/ws/landmarks")
@@ -62,33 +61,10 @@ async def websocket_landmarks(websocket: WebSocket):
             if frame is None or len(frame) != 225:
                 continue   # malformed payload — skip silently
 
-            frame_index: int | None = data.get("frame_index")  # 0-based
+            frame_array = np.array(frame, dtype=np.float32)
+            ready = True
 
-            if frame_index is not None:
-                # ── Indexed mode: slot the frame, no duplicates ──────────
-                frame_slots[frame_index] = frame
-                filled = len(frame_slots)
-                print(f"[FRAME] slot {frame_index+1:02d}/{WINDOW_SIZE}  "
-                      f"({filled} filled, batch #{batch_count + 1})")
-                ready = filled == WINDOW_SIZE
-                if ready:
-                    # Reconstruct in temporal order
-                    sequence_array = np.array(
-                        [frame_slots[i] for i in range(WINDOW_SIZE)],
-                        dtype=np.float32,
-                    )
-                    frame_slots.clear()
-            else:
-                # ── Legacy append mode ───────────────────────────────────
-                frame_list.append(frame)
-                print(f"[FRAME] {len(frame_list):02d}/{WINDOW_SIZE}  "
-                      f"(batch #{batch_count + 1})")
-                ready = len(frame_list) == WINDOW_SIZE
-                if ready:
-                    sequence_array = np.array(frame_list, dtype=np.float32)
-                    frame_list.clear()
-
-            # ── 3. Inference — fires when a complete window is assembled ──
+            # ── 3. Inference — fires immediately for static model ──
             if not ready:
                 continue
 
@@ -101,7 +77,7 @@ async def websocket_landmarks(websocket: WebSocket):
                 continue
 
             try:
-                prediction = predict_sequence(model, sequence_array, label_map)
+                prediction = predict_frame(model, frame_array, label_map)
 
                 if prediction != "...":
                     await websocket.send_json({
@@ -120,6 +96,8 @@ async def websocket_landmarks(websocket: WebSocket):
                     "status": "error",
                     "detail": f"Inference failed: {exc}",
                 })
+                # Heartbeat: resets Railway's 60-second proxy idle-timeout on error
+                await websocket.send_json({"status": "processing"})
 
     except WebSocketDisconnect:
         print("[INFO] Client disconnected from /ws/landmarks")

@@ -139,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(ws_landmarks.router)
     app.include_router(rest_landmarks.router)
 
+
     # ── Health check ──────────────────────────────────────────────────────
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

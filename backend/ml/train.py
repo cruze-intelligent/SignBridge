@@ -51,13 +51,12 @@ import numpy as np
 _HERE: Path = Path(__file__).resolve().parent
 DATASET_DIR: Path = _HERE / "dataset"
 MODELS_DIR: Path = _HERE.parent / "models"
-MODEL_SAVE_PATH: Path = MODELS_DIR / "sign_language_model_v3.h5"
+MODEL_SAVE_PATH: Path = MODELS_DIR / "sign_language_model_v4_static.h5"
 HISTORY_SAVE_PATH: Path = MODELS_DIR / "training_history.json"
 
 # ---------------------------------------------------------------------------
 # Input shape contract (must match prepare_data.py and frontend extraction)
 # ---------------------------------------------------------------------------
-SEQUENCE_LENGTH: int = 30    # number of frames per gesture window
 NUM_FEATURES: int = 225      # floats per frame: RH-63 + LH-63 + Pose-99
 
 # ---------------------------------------------------------------------------
@@ -107,14 +106,10 @@ def load_dataset(dataset_dir: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
     logger.info("Classes (%d)  : %s", len(label_map), ", ".join(label_map))
 
     # Sanity checks
-    assert X_train.ndim == 3, f"Expected 3-D X_train, got {X_train.ndim}-D"
-    assert X_train.shape[1] == SEQUENCE_LENGTH, (
-        f"Sequence length mismatch: expected {SEQUENCE_LENGTH}, "
-        f"got {X_train.shape[1]}"
-    )
-    assert X_train.shape[2] == NUM_FEATURES, (
+    assert X_train.ndim == 2, f"Expected 2-D X_train, got {X_train.ndim}-D"
+    assert X_train.shape[1] == NUM_FEATURES, (
         f"Feature count mismatch: expected {NUM_FEATURES}, "
-        f"got {X_train.shape[2]}"
+        f"got {X_train.shape[1]}"
     )
     assert y_train.shape[1] == len(label_map), (
         "One-hot width ≠ number of labels"
@@ -129,19 +124,13 @@ def load_dataset(dataset_dir: Path) -> tuple[np.ndarray, np.ndarray, list[str]]:
 
 def build_model(num_classes: int) -> "Model":  # noqa: F821
     """
-    Construct and return the compiled BiLSTM + Self-Attention model (v3).
+    Construct and return the compiled Dense Feedforward model (v4).
 
-    Key change vs v2
+    Key change vs v3
     ----------------
-    After BiLSTM-2 (which outputs a full sequence of shape (batch, 30, 128)),
-    a Multi-Head Self-Attention block is inserted.  The attention lets the
-    model learn to focus on the most discriminative frames within each
-    30-frame gesture window, rather than relying solely on the LSTM's final
-    hidden state to summarise the sequence.
-
-    The final LSTM-3 layer is replaced by GlobalAveragePooling1D, which
-    collapses the temporal dimension after attention has already reweighted
-    the frame representations.  This is both more expressive and faster.
+    The input is now a single static frame (225 features) instead of a sequence.
+    The architecture is a simple, deep feedforward network with BatchNormalization
+    and Dropout to prevent overfitting on the dense representation.
     """
     import tensorflow as tf
     import tensorflow.compat.v2
@@ -172,71 +161,27 @@ def build_model(num_classes: int) -> "Model":  # noqa: F821
     # Input
     # ------------------------------------------------------------------
     inputs = layers.Input(
-        shape=(SEQUENCE_LENGTH, NUM_FEATURES),
-        name="landmark_sequence",
+        shape=(NUM_FEATURES,),
+        name="landmark_frame",
     )
 
     # ------------------------------------------------------------------
-    # Recurrent layers  (unchanged from v2)
+    # Dense classification head  (NEW in v4 static)
     # ------------------------------------------------------------------
-    x = layers.Bidirectional(
-        layers.LSTM(128, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
-        name="bilstm_1",
-    )(inputs)
-    # Output shape: (batch, 30, 256)  — 128 units × 2 directions
-
-    x = layers.Bidirectional(
-        layers.LSTM(64, return_sequences=True, dropout=0.2, recurrent_dropout=0.1),
-        name="bilstm_2",
-    )(x)
-    # Output shape: (batch, 30, 128)  — 64 units × 2 directions
-
-    # ------------------------------------------------------------------
-    # Self-Attention block  (NEW in v3)
-    #
-    # Multi-Head Attention with:
-    #   num_heads = 4    — 4 parallel attention heads
-    #   key_dim   = 32   — 128 / 4  (standard split keeps param count low)
-    #   dropout   = 0.1  — applied to the attention weights
-    #
-    # Residual connection + LayerNorm ("Pre-LN" style, stable training):
-    #   attn_out = MHA(x, x)          # self-attention: query = key = value = x
-    #   x        = LayerNorm(x + attn_out)   # residual keeps gradient flow healthy
-    # ------------------------------------------------------------------
-    attn_out = layers.MultiHeadAttention(
-        num_heads=4,
-        key_dim=32,
-        dropout=0.1,
-        name="self_attention",
-    )(x, x)  # query=x, value=x  →  self-attention over the 30 timesteps
-
-    x = layers.Add(name="attn_residual")([x, attn_out])
-    x = layers.LayerNormalization(epsilon=1e-6, name="attn_norm")(x)
-    # Output shape: (batch, 30, 128)  — same as BiLSTM-2 output
-
-    # ------------------------------------------------------------------
-    # Temporal collapse  (replaces LSTM-3 from v2)
-    #
-    # GlobalAveragePooling1D averages across the 30 (now attention-weighted)
-    # frame representations.  This is simpler and faster than LSTM-3 while
-    # being more expressive because attention has already done the hard work
-    # of selecting which frames matter.
-    # ------------------------------------------------------------------
-    x = layers.GlobalAveragePooling1D(name="temporal_pool")(x)
-    # Output shape: (batch, 128)
-
-    # ------------------------------------------------------------------
-    # Dense classification head  (unchanged from v2)
-    # ------------------------------------------------------------------
-    x = layers.Dense(128, name="dense_1")(x)
+    x = layers.Dense(256, name="dense_1")(inputs)
     x = layers.BatchNormalization(name="bn_1")(x)
     x = layers.Activation("relu", name="relu_1")(x)
-    x = layers.Dropout(0.40, name="dropout_1")(x)
+    x = layers.Dropout(0.30, name="dropout_1")(x)
 
-    x = layers.Dense(64, name="dense_2")(x)
+    x = layers.Dense(128, name="dense_2")(x)
     x = layers.BatchNormalization(name="bn_2")(x)
     x = layers.Activation("relu", name="relu_2")(x)
     x = layers.Dropout(0.30, name="dropout_2")(x)
+    
+    x = layers.Dense(64, name="dense_3")(x)
+    x = layers.BatchNormalization(name="bn_3")(x)
+    x = layers.Activation("relu", name="relu_3")(x)
+    x = layers.Dropout(0.20, name="dropout_3")(x)
 
     # ------------------------------------------------------------------
     # Output layer: dynamically sized to num_classes
@@ -247,14 +192,14 @@ def build_model(num_classes: int) -> "Model":  # noqa: F821
         name="gesture_output",
     )(x)
 
-    model = Model(inputs=inputs, outputs=outputs, name="SignLanguageLSTM_v3")
+    model = Model(inputs=inputs, outputs=outputs, name="SignLanguageDense_v4")
 
     # ------------------------------------------------------------------
     # Compile
     # ------------------------------------------------------------------
     model.compile(
-        optimizer=optimizers.Adam(learning_rate=1e-3),
-        loss="categorical_crossentropy",
+        optimizer=optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4),
+        loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1),
         metrics=[
             "accuracy",
             metrics.TopKCategoricalAccuracy(k=3, name="top3_accuracy"),
@@ -473,7 +418,7 @@ def main() -> None:
 
     logger.info("-" * 60)
     logger.info("Best model saved to : %s", MODEL_SAVE_PATH)
-    logger.info("Architecture        : SignLanguageLSTM_v3 (BiLSTM + Self-Attention)")
+    logger.info("Architecture        : SignLanguageDense_v4 (Dense Feedforward)")
     logger.info("Training complete.")
     logger.info("=" * 60)
 
